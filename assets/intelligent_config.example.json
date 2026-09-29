@@ -1,0 +1,32 @@
+{
+  "_comment": "执行配置占位模板（flow.py --config 使用）。所有键都有真实消费点——模板里出现的键必须在代码里被读取，否则等于给用户一个假开关。复制到包外填写，勿在包内写真实凭据。",
+  "project": "wjx-api-test",
+  "adapter": "sojump",
+  "environment": {
+    "_comment": "写操作门禁的唯一依据。必须显式声明 type=test 且 write_enabled=true 才放行创建/修改/发布/删除；域名像测试环境不构成授权。",
+    "name": "<环境名称，如 round1_local>",
+    "type": "test",
+    "write_enabled": false
+  },
+  "execution": {
+    "profile": "plan",
+    "retry_network_errors": 2,
+    "request_interval_ms": 400,
+    "max_cases": 500,
+    "cleanup_enabled": false,
+    "cleanup_delete_action": "",
+    "minimize_findings": true,
+    "_comment": "profile 决定跑哪些用例；其余键控制限流与证据成本。"
+  },
+  "inputs": {
+    "_comment": "契约与历史问题的来源。contracts[0] 仅在命令行未给 --contract/--action 时生效；historical_issues 用于风险排序（可写 CSV 路径或内联列表）；ui_baseline 指到页面基线 JSON，配上才允许 AB 维度做硬断言。",
+    "contracts": [],
+    "historical_issues": [],
+    "ui_baseline": null
+  },
+  "_notes": [
+    "测试地址不在这里配：域名+路径一律由 WJX_BASE_URL 或包外 personal_config.json 提供，取自接口文档『接口地址』。",
+    "清理开关也不在这里配：深度流程用用例内 teardown()/register_cleanup() 显式登记，冒烟用配置里的 teardown_enabled。",
+    "profile 取值：plan（只出计划）/ smoke（仅 P0）/ full（全部启用）/ exploratory（含探索性）。"
+  ]
+}

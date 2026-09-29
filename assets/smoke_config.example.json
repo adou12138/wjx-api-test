@@ -1,0 +1,149 @@
+{
+  "_comment": "冒烟环境配置【通用模板，随 wjx-api-test skill 分享】。采用【多套环境结构】：顶层放各环境共享字段（method/timeout/qps_tiers/判定关键词等）+ envs 数组（每组一个隔离环境，含各自的 base_url/公共参数/账号/overrides），支持任意多套环境并可用 region 分组（如国内版 cn 2 套 + 国际版 intl 2 套）——本模板内置 cn 2 组 + intl 1 组示例占位，不必一次写全、按需增删 envs 块即可。环境选择：先按 region 过滤（--region / WJX_REGION，如 cn / intl；跨 region 的参数不会进入本次运行），再按命令行 --env <环境name> > 环境变量 WJX_ENV > 顶层 default_env > 候选中第一个；无 envs 键的单环境扁平结构仍完全兼容。复制本文件并按你的项目改写 envs 里的 base_url / common_params / account / overrides 即可，不必改 smoke_runner.py。个人参数一律用『自带中文接口参数含义』的占位符，运行时由 personal_config.json 或 WJX_* 环境变量自动解析——不要在这里写死真实值。占位符清单（含义已嵌在尖括号内）：<appid 应用ID：所有请求的公共参数 appid，唯一标识你的企业/应用> / <creater_main 主账号：请求参数 creater/creater_main 下发的创建者主账号登录名> / <creater_sub 子账号：请求参数 creater_sub 下发的创建者子账号登录名> / <corpid 企业ID：公共/业务参数 corpid，标识企业主体> / <sysid 系统ID：业务参数 sysid，仅部分接口需要> / <域名：接口根域名，由 personal_config.base_url 解析，如 your-env.sojump.cn>。也兼容 <APPID>/<主账号>/<子账号>/<CORPID>/<SYSID>/<域名> 等简短写法。各 env 块 overrides 内的 vid/uid/submitdata 等是接口专属数据且【按环境独立】——某环境生成的实例 ID 在其他环境通常不存在，须分别按各环境真实接口重新生成，不要跨环境原样使用；未生成的环境相关用例会被 na_keywords 判为 N/A。【跨环境纪律】正常用例只使用所选环境的参数；仅异常场景测试（跨企业/跨租户/越权隔离）允许显式跨环境：冒烟用 --cross-env <环境name>（挂到 ctx.cross_env，也可设 WJX_CROSS_ENV），产物带 _cross_env 标记便于审计；未显式开启时其他环境参数完全不加载。参考实例见 assets/smoke_config_cw.json（本团队真实值，仅内部使用、不要分享）。",
+  "default_env": "round1_local",
+  "default_endpoint": "default.aspx",
+  "method": "POST",
+  "timeout": 60,
+  "tls_verify": false,
+  "action_param": "action",
+  "common_param_generators": {
+    "ts": "unix_ts"
+  },
+  "qps_tiers": {
+    "5": 0.2,
+    "10": 0.12,
+    "100": 0.02,
+    "200": 0.01,
+    "10000": 0.001
+  },
+  "error_retry": 2,
+  "error_retry_sleep": 1.0,
+  "teardown_enabled": false,
+  "env_keywords": [
+    "频率过快",
+    "连接",
+    "timeout",
+    "timed out",
+    "网络",
+    "请稍后"
+  ],
+  "na_keywords": [
+    "混合云",
+    "用户体系",
+    "通讯录",
+    "360",
+    "奖品",
+    "未开通",
+    "未启用",
+    "未创建",
+    "不支持",
+    "暂未",
+    "未配置",
+    "已废弃",
+    "已作废",
+    "非360",
+    "编辑中",
+    "暂停状态",
+    "oss路径异常",
+    "状态不能",
+    "没有符合条件",
+    "用户名已被占用",
+    "标签已存在",
+    "部门编码",
+    "之后又修改",
+    "发布之后",
+    "修改了此问卷"
+  ],
+  "envs": [
+    {
+      "name": "round1_local",
+      "_comment": "第 1 轮冒烟环境：本地环境类（内网/自建测试服务，鉴权较宽松）。name 是环境唯一标识，供 --env / WJX_ENV 选择时引用，可按你的环境改名（如 round1_wjxwww）",
+      "base_url": "https://<域名：第1轮环境接口根域名，由 personal_config.base_url 解析，如 your-env1.sojump.cn>/openapi/{endpoint}",
+      "common_params": {
+        "encode": "sha1",
+        "appid": "<appid 应用ID：第1轮环境的应用ID，唯一标识你的企业/应用>",
+        "sign": "1234"
+      },
+      "account": {
+        "main": "<creater_main 主账号：第1轮环境的创建者主账号登录名>",
+        "sub": "<creater_sub 子账号：第1轮环境的创建者子账号登录名>"
+      },
+      "overrides": {
+        "minimal_questions": "<minimal_questions 业务参数：冒烟用的极简题目 JSON 数组（含 q_index/q_type/q_title/is_requir/items 等字段），须按第1轮环境真实接口重新生成>",
+        "tiny_png": "<tiny_png 业务参数：1x1 透明 PNG 的 base64 串，作为图片/附件类字段的最小化样本，须按真实接口替换>",
+        "settings_vid": "<settings_vid 业务参数：第1轮环境问卷/设置接口的 vid，须按真实接口重新生成>",
+        "usersystem_vid": "<usersystem_vid 业务参数：第1轮环境用户体系接口的 vid，须按真实接口重新生成>",
+        "usersystem_uid": "<usersystem_uid 业务参数：第1轮环境用户体系接口的 uid，须按真实接口重新生成>",
+        "response_vid": "<response_vid 业务参数：第1轮环境作答/回收接口的 vid，须按真实接口重新生成>",
+        "survey_360_vid": "<survey_360_vid 业务参数：第1轮环境360评估接口的 vid，须按真实接口重新生成>",
+        "modify_vid": "<modify_vid 业务参数：第1轮环境修改接口的 vid，须按真实接口重新生成>",
+        "modify_score_key": "<modify_score_key 业务参数：第1轮环境修改评分项的 key，须按真实接口重新生成>",
+        "sysid": "<sysid 系统ID：第1轮环境业务参数 sysid，仅部分接口需要>",
+        "corpid": "<corpid 企业ID：第1轮环境公共/业务参数 corpid>",
+        "submitdata": "<submitdata 业务参数：第1轮环境提交作答的数据体（与题目结构对应），须按真实接口重新生成>",
+        "modify_submitdata": "<modify_submitdata 业务参数：第1轮环境修改作答的数据体，须按真实接口重新生成>"
+      },
+      "region": "cn"
+    },
+    {
+      "name": "round2_devtest",
+      "_comment": "第 2 轮冒烟环境：预发布环境类（接近生产，鉴权/内容安全更完整，可能有防重提交与限流）。与第 1 轮环境相互隔离：appid/账号/域名/业务实例 ID 均独立；overrides 里第1轮生成的 vid 类实例 ID 在本环境不存在，须按本环境真实接口重新生成，未生成前相关用例会被 na_keywords 判为 N/A",
+      "base_url": "https://<域名：第2轮环境接口根域名，由 personal_config.base_url 解析，如 your-env2.wjx.cn>/openapi/{endpoint}",
+      "common_params": {
+        "encode": "sha1",
+        "appid": "<appid 应用ID：第2轮环境自己的应用ID，与第1轮环境相互独立>",
+        "sign": "1234"
+      },
+      "account": {
+        "main": "<creater_main 主账号：第2轮环境自己的主账号登录名>",
+        "sub": "<creater_sub 子账号：第2轮环境自己的子账号登录名>"
+      },
+      "overrides": {
+        "minimal_questions": "<minimal_questions 业务参数：冒烟用的极简题目 JSON 数组，须按第2轮环境真实接口重新生成>",
+        "tiny_png": "<tiny_png 业务参数：1x1 透明 PNG 的 base64 串，作为图片/附件类字段的最小化样本，须按真实接口替换>",
+        "settings_vid": "<settings_vid 业务参数：第2轮环境问卷/设置接口的 vid，须按本环境真实接口重新生成>",
+        "usersystem_vid": "<usersystem_vid 业务参数：第2轮环境用户体系接口的 vid，须按本环境真实接口重新生成>",
+        "usersystem_uid": "<usersystem_uid 业务参数：第2轮环境用户体系接口的 uid，须按本环境真实接口重新生成>",
+        "response_vid": "<response_vid 业务参数：第2轮环境作答/回收接口的 vid，须按本环境真实接口重新生成>",
+        "survey_360_vid": "<survey_360_vid 业务参数：第2轮环境360评估接口的 vid，须按本环境真实接口重新生成>",
+        "modify_vid": "<modify_vid 业务参数：第2轮环境修改接口的 vid，须按本环境真实接口重新生成>",
+        "modify_score_key": "<modify_score_key 业务参数：第2轮环境修改评分项的 key，须按本环境真实接口重新生成>",
+        "sysid": "<sysid 系统ID：第2轮环境业务参数 sysid，仅部分接口需要；未开通时留空>",
+        "corpid": "<corpid 企业ID：第2轮环境公共/业务参数 corpid；未开通时留空>",
+        "submitdata": "<submitdata 业务参数：第2轮环境提交作答的数据体，须按本环境真实接口重新生成>",
+        "modify_submitdata": "<modify_submitdata 业务参数：第2轮环境修改作答的数据体，须按本环境真实接口重新生成>"
+      },
+      "region": "cn"
+    },
+    {
+      "name": "intl_1",
+      "region": "intl",
+      "_comment": "国际版示例套（占位，按需增删）：与国内版完全隔离——域名/appid/账号/业务实例 ID 均独立。不测国际版可整块删除；需要 2 套国际版时复制本块改名 intl_2。运行时用 --region intl（或 WJX_REGION=intl）+ --env intl_1 选择，跨 region 参数不会误入国内版运行",
+      "base_url": "https://<域名：国际版环境接口根域名，由 personal_config.base_url 解析，如 your-intl-env.example.com>/openapi/{endpoint}",
+      "common_params": {
+        "encode": "sha1",
+        "appid": "<appid 应用ID：国际版环境的应用ID，与国内版相互独立>",
+        "sign": "1234"
+      },
+      "account": {
+        "main": "<creater_main 主账号：国际版环境的主账号登录名>",
+        "sub": "<creater_sub 子账号：国际版环境的子账号登录名>"
+      },
+      "overrides": {
+        "minimal_questions": "<minimal_questions 业务参数：极简题目 JSON 数组，须按国际版环境真实接口重新生成>",
+        "tiny_png": "<tiny_png 业务参数：1x1 透明 PNG 的 base64 串，作为图片/附件类字段的最小化样本>",
+        "settings_vid": "<settings_vid 业务参数：国际版环境问卷/设置接口的 vid，须按本环境真实接口重新生成>",
+        "usersystem_vid": "<usersystem_vid 业务参数：国际版环境用户体系接口的 vid，须按本环境真实接口重新生成>",
+        "usersystem_uid": "<usersystem_uid 业务参数：国际版环境用户体系接口的 uid，须按本环境真实接口重新生成>",
+        "response_vid": "<response_vid 业务参数：国际版环境作答/回收接口的 vid，须按本环境真实接口重新生成>",
+        "survey_360_vid": "<survey_360_vid 业务参数：国际版环境360评估接口的 vid，须按本环境真实接口重新生成>",
+        "modify_vid": "<modify_vid 业务参数：国际版环境修改接口的 vid，须按本环境真实接口重新生成>",
+        "modify_score_key": "<modify_score_key 业务参数：国际版环境修改评分项的 key，须按本环境真实接口重新生成>",
+        "sysid": "<sysid 系统ID：国际版环境业务参数 sysid，可选；未开通时留空>",
+        "corpid": "<corpid 企业ID：国际版环境公共/业务参数 corpid；未开通时留空>",
+        "submitdata": "<submitdata 业务参数：国际版环境提交作答的数据体，须按本环境真实接口重新生成>",
+        "modify_submitdata": "<modify_submitdata 业务参数：国际版环境修改作答的数据体，须按本环境真实接口重新生成>"
+      }
+    }
+  ]
+}

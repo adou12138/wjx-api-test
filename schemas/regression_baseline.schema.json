@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["contract_hash", "cases"],
+  "properties": {
+    "contract_hash": {"type": "string"},
+    "assertion_version": {"type": "string"},
+    "cases": {"type": "array"}
+  },
+  "additionalProperties": true
+}

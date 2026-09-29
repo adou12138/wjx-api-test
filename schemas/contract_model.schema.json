@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["method", "path", "fields", "response"],
+  "properties": {
+    "operation": {"type": ["string", "integer", "null"]},
+    "method": {"type": "string"},
+    "path": {"type": "string"},
+    "fields": {"type": "array"},
+    "relations": {"type": "array"},
+    "response": {"type": "object"}
+  },
+  "additionalProperties": true
+}

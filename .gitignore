@@ -1,0 +1,38 @@
+# ============================================================
+# wjx-api-test .gitignore —— 个人凭据与运行产物一律不上传
+# 个人值统一从 ~/.workbuddy/wjx-api-test/personal_config.json 读取
+# （见 assets/personal_config.example.json 模板）
+# ============================================================
+
+# —— 个人凭据（绝不上传）——
+personal_config.json
+smoke_config_wjx.json
+smoke_config_*_private.json
+~/.workbuddy/
+.env
+*.local.json
+
+# —— 运行产物 ——
+api_test_out/
+reports/
+runs/
+evidence/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.parity-runtime/
+.coverage
+htmlcov/
+
+# —— 历史备份（保留本地即可）——
+backup/
+
+# —— 系统垃圾 ——
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

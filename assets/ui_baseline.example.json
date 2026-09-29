@@ -1,0 +1,52 @@
+{
+  "_comment": "页面基线**占位模板**（随 skill 分享，零真实数据）。真实基线放包外：~/.workbuddy/wjx-api-test/ui_baseline.json，或用 --ui-baseline / WJX_UI_BASELINE 指定。字段含义见 references/ui_baseline.md 第 5 节。",
+  "_readme": [
+    "template=true 表示这是格式样例：加载器会主动跳过它，绝不会拿示范值去和接口返回值比对（防止'假预期制造假缺陷'）。",
+    "复制本文件到包外后，请删除 template 字段，并把每行 page_value 换成你在页面上**实际观测**到的值。",
+    "page_value 必须与实际页面显示**完全一致**（含时区、千分位、单位、大小写），否则会误判 AB 缺陷。",
+    "字段有基线才会被比对；没登记的字段会被记为覆盖率缺口，不会凭空编预期值。"
+  ],
+  "template": true,
+  "baselines": [
+    {
+      "field": "created_at",
+      "action": "1000107",
+      "dimension": "AB3",
+      "aspect": "展示口径",
+      "page_value": "2026-09-22 16:30",
+      "source": "人工",
+      "captured_at": "2026-09-22",
+      "note": "AI主页列表页『创建时间』列。示例值，接入真实项目必须重新观测；注意时区（历史缺陷：差 8 小时）。"
+    },
+    {
+      "field": "status",
+      "action": "1000107",
+      "dimension": "AB4",
+      "aspect": "枚举口径",
+      "page_value": 1,
+      "source": "抓取",
+      "captured_at": "2026-09-22",
+      "note": "AI主页编辑页『状态』下拉共 2 项（0=草稿、1=发布）。页面下拉项集合须与接口允许值集合一致，不多不少。"
+    },
+    {
+      "field": "title",
+      "action": "1000107",
+      "dimension": "AB6",
+      "aspect": "边界口径",
+      "page_value": "未命名AI主页",
+      "source": "人工",
+      "captured_at": "2026-09-22",
+      "note": "标题留空保存后的页面展示值。示例值，须实测替换；页面截断长度与接口长度上限是否一致属 AB6 边界口径。"
+    },
+    {
+      "field": "description",
+      "action": "1000107",
+      "dimension": "AB5",
+      "aspect": "默认值口径",
+      "page_value": "",
+      "source": "人工",
+      "captured_at": "2026-09-22",
+      "note": "未填写说明字段时的页面默认值。空串表示页面留空——这正是 `assert_no_over_validation()` 要覆盖的场景（接口若拒绝空说明即为缺陷）。"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "_comment": "个人参数配置模板（随 wjx-api-test skill 分享，占位符，不含任何真实数据）。每个配置项对应哪个 Sojump 接口参数、中文含义、取值示例，详见 assets/配置参数说明.md。复制本文件为 personal_config.json 填入真实值；personal_config.json 放 skill 包外（默认 ~/.workbuddy/wjx-api-test/personal_config.json，或用环境变量 WJX_CONFIG 指定路径），不要入库/分享。环境变量可覆盖所选环境的同名字段：WJX_BASE_URL / WJX_APPID / WJX_MAIN / WJX_SUB / WJX_CORPID / WJX_SYSID / WJX_CROSS_APPID / WJX_SIGN。【多套环境结构】envs 数组支持任意多套环境并可用 region 分组（如国内版 cn 2 套 + 国际版 intl 2 套）；本模板内置 cn 2 组 + intl 1 组示例占位，不必一次写全、按需增删 envs 块即可。环境选择：先按 region 过滤（--region / WJX_REGION，如 cn / intl；跨 region 的参数不会进入本次运行），再按命令行 --env <环境name>（冒烟脚本支持）> 环境变量 WJX_ENV > 顶层 default_env > 候选中第一个。顶层（envs/default_env 之外）字段视为所有环境共享的公共字段，仅在所选环境块未定义该项时回退。单环境扁平结构（无 envs 键）仍完全兼容。【跨环境纪律】正常用例只使用所选环境的参数；仅异常场景测试（跨企业/跨租户/越权隔离）允许显式跨环境：深度测试设 WJX_CROSS_ENV=<环境name>（加载到 CROSS_CFG），冒烟用 --cross-env <环境name>（挂到 ctx.cross_env），产物会带 _cross_env 标记便于审计；未显式开启时其他环境参数完全不加载。参考实例见 assets/personal_config_cw.json（本团队真实值，仅内部使用、不要分享）。",
+  "default_env": "round1_local",
+  "envs": [
+    {
+      "name": "round1_local",
+      "region": "cn",
+      "_comment": "国内版第 1 套（第 1 轮测试）：本地环境类（内网/自建测试服务，鉴权较宽松）。name 是环境唯一标识（供 --env / WJX_ENV 引用，可改名）；region 用于国内版/国际版分组（cn=国内版，intl=国际版），可自行增减套数",
+      "base_url": "<接口基础地址：HTTP 请求的根 URL + 路径，取自契约文档『接口地址』字段，示例 https://your-env1.sojump.cn/openapi/folder.aspx>",
+      "appid": "<appid 应用ID：所有请求的公共参数 appid，唯一标识你的企业/应用，示例 1000000>",
+      "sign": "<sign 签名值：所有请求的公共参数 sign；当前约定不校验，填任意固定值（示例 1234）即可>",
+      "main_account": "<creater_main 主账号：请求参数 creater / creater_main 下发的创建者主账号登录名，示例 your_main_account>",
+      "sub_account": "<creater_sub 子账号：请求参数 creater_sub 下发的创建者子账号登录名，示例 your_sub_account>",
+      "corpid": "<corpid 企业ID：公共/业务参数 corpid，标识企业主体，可选，示例 org0000000000>",
+      "sysid": "<sysid 系统ID：业务参数 sysid，仅部分接口需要，可选，示例 100001>",
+      "cross_appid": "<跨企业 appid：A 系列跨企业隔离用例用的另一企业 appid（同 region 内），可选，示例 2000000>"
+    },
+    {
+      "name": "round2_devtest",
+      "region": "cn",
+      "_comment": "国内版第 2 套（第 2 轮测试）：预发布环境类（接近生产，鉴权/内容安全更完整，可能有防重提交与限流）。与本套第 1 环境相互隔离，appid/账号独立填写；某字段该环境未开通时留空字符串",
+      "base_url": "<接口基础地址：HTTP 请求的根 URL + 路径，取自契约文档『接口地址』字段，示例 https://your-env2.wjx.cn/openapi/folder.aspx>",
+      "appid": "<appid 应用ID：该环境自己的应用ID，与其他环境相互独立，示例 2000000>",
+      "sign": "<sign 签名值：所有请求的公共参数 sign；当前约定不校验，填任意固定值（示例 1234）即可>",
+      "main_account": "<creater_main 主账号：该环境自己的主账号登录名，示例 your_main_account_2>",
+      "sub_account": "<creater_sub 子账号：该环境自己的子账号登录名，示例 your_sub_account_2>",
+      "corpid": "<corpid 企业ID：公共/业务参数 corpid，可选；该环境未开通时留空>",
+      "sysid": "<sysid 系统ID：业务参数 sysid，可选；该环境未开通时留空>",
+      "cross_appid": "<跨企业 appid：异常场景跨企业隔离用例用的另一企业 appid（同 region 内），可选；未开通时留空>"
+    },
+    {
+      "name": "intl_1",
+      "region": "intl",
+      "_comment": "国际版示例套（占位，按需增删）：国际版环境类，与国内版完全隔离——域名/appid/账号/实例 ID 均独立。不测国际版可整块删除；需要 2 套国际版时复制本块改名 intl_2。运行时用 --region intl（或 WJX_REGION=intl）+ --env intl_1 选择，跨 region 参数不会误入国内版运行",
+      "base_url": "<接口基础地址：国际版环境的根 URL + 路径，示例 https://your-intl-env.example.com/openapi/folder.aspx>",
+      "appid": "<appid 应用ID：国际版环境的应用ID，与国内版相互独立，示例 3000000>",
+      "sign": "<sign 签名值：国际版环境的签名值；约定不校验时填任意固定值即可>",
+      "main_account": "<creater_main 主账号：国际版环境的主账号登录名，示例 your_intl_main_account>",
+      "sub_account": "<creater_sub 子账号：国际版环境的子账号登录名，示例 your_intl_sub_account>",
+      "corpid": "<corpid 企业ID：国际版环境的企业主体标识，可选；未开通时留空>",
+      "sysid": "<sysid 系统ID：国际版环境的业务参数 sysid，可选；未开通时留空>",
+      "cross_appid": "<跨企业 appid：国际版内跨企业隔离用例用的另一 appid，可选；未开通时留空>"
+    }
+  ]
+}

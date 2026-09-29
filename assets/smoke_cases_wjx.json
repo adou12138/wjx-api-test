@@ -1,0 +1,986 @@
+{
+  "environment": "wjxwww.sojump.cn",
+  "note": "问卷星开放接口冒烟参考实例。参数全部声明式外置，可直接按新接口改写；复杂逻辑用 pre（前置步骤）/ retry_until（轮询）/ skip_if（条件跳过）/ generate（生成标识）表达。",
+  "total": 48,
+  "cases": [
+    {
+      "action": "1000002",
+      "name": "2.1.2获取问卷列表[1000002]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/021_2.1.2获取问卷列表[1000002].md",
+      "params": {
+        "creater": "${ctx.account.main}",
+        "page_index": 1,
+        "page_size": 5
+      }
+    },
+    {
+      "action": "1000101",
+      "name": "2.1.6 创建问卷[1000101]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 5,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/027_2.1.6 创建问卷[1000101].md",
+      "params": {
+        "creater": "${ctx.account.main}",
+        "atype": 1,
+        "title": "TEST_AUTO_SMOKE_${run_id}_disposable",
+        "desc": "disposable",
+        "publish": true,
+        "questions": "${env.minimal_questions}"
+      },
+      "extracts": {
+        "disposable_vid": "data.vid",
+        "response_vid": "data.vid"
+      }
+    },
+    {
+      "action": "1000001",
+      "name": "2.1.1获取问卷内容[1000001]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 200,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/020_2.1.1获取问卷内容[1000001].md",
+      "params": {
+        "vid": "${ctx.smoke_vid}",
+        "get_questions": "1",
+        "get_items": "0"
+      }
+    },
+    {
+      "action": "1000003",
+      "name": "2.1.3获取问卷设置[1000003]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/022_2.1.3获取问卷设置[1000003].md",
+      "params": {
+        "vid": "${ctx.smoke_vid}",
+        "additional_setting": "[1000,1001]"
+      }
+    },
+    {
+      "action": "1000004",
+      "name": "2.1.4获取用户名下的所有题目标签列表[1000004]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/023_2.1.4获取用户名下的所有题目标签列表[1000004].md",
+      "params": {
+        "username": "${ctx.account.main}"
+      },
+      "extracts": {
+        "tag_id": "data.0.tag_id",
+        "tag_name": "data.0.tag_name"
+      }
+    },
+    {
+      "action": "1000005",
+      "name": "2.1.5通过查询指定题目标签，获取到问卷及题目关键信息[1000005]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/025_2.1.5通过查询指定题目标签，获取到问卷及题目关键信息[1000005].md",
+      "skip_if": "!ctx.tag_id",
+      "params": {
+        "tag_id": "${ctx.tag_id}"
+      }
+    },
+    {
+      "action": "1000107",
+      "name": "2.1.14 创建AI主页[1000107]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 5,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/033_2.1.14 创建AI主页[1000107].md",
+      "params": {
+        "creater": "${ctx.account.main}",
+        "title": "TEST_AUTO_SMOKE_AI_${run_id}",
+        "html_content": "<html><head><title>TEST_AUTO_SMOKE_AI_${run_id}</title></head><body><h1>smoke</h1></body></html>",
+        "publish": true
+      },
+      "extracts": {
+        "ai_vid": "data.vid"
+      }
+    },
+    {
+      "action": "1000108",
+      "name": "2.1.15 更新AI主页[1000108]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/034_2.1.15 更新AI主页[1000108].md",
+      "skip_if": "!ctx.ai_vid",
+      "params": {
+        "vid": "${ctx.ai_vid}",
+        "title": "TEST_AUTO_SMOKE_AI_${run_id}_upd",
+        "html_content": "<html><head><title>updated</title></head><body><h1>updated</h1></body></html>"
+      }
+    },
+    {
+      "action": "1000104",
+      "name": "2.1.10上传文件[1000104]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/031_2.1.10上传文件[1000104].md",
+      "params": {
+        "file_name": "smoke.png",
+        "file": "${env.tiny_png}",
+        "is_private": "0"
+      }
+    },
+    {
+      "action": "1000103",
+      "name": "2.1.8修改设置问卷[1000103]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/029_2.1.8修改设置问卷[1000103].md",
+      "pre": [
+        {
+          "action": "1000003",
+          "params": {
+            "vid": "${ctx.settings_vid}",
+            "additional_setting": "[1000,1001]"
+          }
+        }
+      ],
+      "params": {
+        "vid": "${ctx.settings_vid}",
+        "api_setting": "{\"limit_type\":0}"
+      }
+    },
+    {
+      "action": "1000102",
+      "name": "2.1.7修改问卷状态[1000102]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/028_2.1.7修改问卷状态[1000102].md",
+      "skip_if": "!ctx.disposable_vid",
+      "params": {
+        "vid": "${ctx.disposable_vid}",
+        "state": 2
+      }
+    },
+    {
+      "action": "1001001",
+      "name": "2.2.1 答卷提交[1001001]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 100,
+      "na_hints": [],
+      "contract_file": "开放接口文档/答卷[1001]/035_2.2.1 答卷提交[1001001].md",
+      "params": {
+        "vid": "${ctx.answer_vid}",
+        "nocache": 1,
+        "inputcosttime": "${rand:30-100}",
+        "submitdata": "${env.submitdata}"
+      },
+      "extracts": {
+        "response_jid": "data.joinid"
+      }
+    },
+    {
+      "action": "1001002",
+      "name": "2.2.2 答卷查询[1001002]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 200,
+      "na_hints": [],
+      "contract_file": "开放接口文档/答卷[1001]/036_2.2.2 答卷查询[1001002].md",
+      "params": {
+        "vid": "${ctx.answer_vid}",
+        "page_index": 1,
+        "page_size": 5,
+        "valid": true
+      }
+    },
+    {
+      "action": "1001003",
+      "name": "2.2.3 答卷实时查询[1001003]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 10000,
+      "na_hints": [],
+      "contract_file": "开放接口文档/答卷[1001]/037_2.2.3 答卷实时查询[1001003].md",
+      "params": {
+        "vid": "${ctx.answer_vid}",
+        "page_index": 1,
+        "page_size": 5,
+        "valid": true
+      }
+    },
+    {
+      "action": "1001004",
+      "name": "2.2.4 答卷下载[1001004]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/答卷[1001]/038_2.2.4 答卷下载[1001004].md",
+      "params": {
+        "vid": "${ctx.answer_vid}",
+        "valid": true
+      }
+    },
+    {
+      "action": "1001101",
+      "name": "2.2.6 默认报告查询[1001101]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 100,
+      "na_hints": [],
+      "contract_file": "开放接口文档/答卷[1001]/041_2.2.6 默认报告查询[1001101].md",
+      "params": {
+        "vid": "${ctx.answer_vid}"
+      }
+    },
+    {
+      "action": "1001006",
+      "name": "2.2.6 获取中奖者信息[1001006]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 100,
+      "na_hints": [],
+      "contract_file": "开放接口文档/答卷[1001]/042_2.2.6 获取中奖者信息[1001006].md",
+      "params": {
+        "vid": "${ctx.answer_vid}"
+      }
+    },
+    {
+      "action": "1001007",
+      "name": "2.2.7 修改答卷[1001007]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/答卷[1001]/044_2.2.7 修改答卷[1001007].md",
+      "pre": [
+        {
+          "action": "1001001",
+          "params": {
+            "vid": "${env.modify_vid}",
+            "nocache": 1,
+            "inputcosttime": "${rand:30-100}",
+            "submitdata": "${env.modify_submitdata}"
+          },
+          "extracts": {
+            "modify_jid": "data.joinid"
+          }
+        }
+      ],
+      "skip_if": "!ctx.modify_jid",
+      "params": {
+        "vid": "${env.modify_vid}",
+        "jid": "${ctx.modify_jid}",
+        "type": "1",
+        "answers": "{\"${env.modify_score_key}\":\"5\"}"
+      }
+    },
+    {
+      "action": "1001102",
+      "name": "2.2.7 360度评估报告详细数据下载[1001102]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/答卷[1001]/043_2.2.7 360度评估报告详细数据下载[1001102].md",
+      "skip_if": "!env.survey_360_vid",
+      "params": {
+        "vid": "${env.survey_360_vid}"
+      }
+    },
+    {
+      "action": "1001005",
+      "name": "2.2.5 获取文件访问链接[1001005](仅限混合云场景使用)",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/答卷[1001]/039_2.2.5 获取文件访问链接[1001005](仅限混合云场景使用).md",
+      "skip_if": "!ctx.response_jid",
+      "params": {
+        "vid": "${ctx.answer_vid}",
+        "joinid": "${ctx.response_jid}",
+        "file_name": "test.png"
+      }
+    },
+    {
+      "action": "1003005",
+      "name": "2.4.5 查询子账户[1003005]",
+      "module": "多用户管理[1003]",
+      "endpoint": "subuser.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/多用户管理[1003]/059_2.4.5 查询子账户[1003005].md",
+      "params": {
+        "role": "2",
+        "page_index": 1,
+        "page_size": 10
+      }
+    },
+    {
+      "action": "1003001",
+      "name": "2.4.1 添加子账户[1003001]",
+      "module": "多用户管理[1003]",
+      "endpoint": "subuser.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/多用户管理[1003]/055_2.4.1 添加子账户[1003001].md",
+      "generate": {
+        "subuser_name": "smk${uuid10}"
+      },
+      "params": {
+        "subuser": "${ctx.subuser_name}",
+        "role": "2",
+        "password": "Smoke123!"
+      }
+    },
+    {
+      "action": "1003002",
+      "name": "2.4.2 修改子账户[1003002]",
+      "module": "多用户管理[1003]",
+      "endpoint": "subuser.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/多用户管理[1003]/056_2.4.2 修改子账户[1003002].md",
+      "skip_if": "!ctx.subuser_name",
+      "params": {
+        "subuser": "${ctx.subuser_name}",
+        "role": "2",
+        "email": "${ctx.subuser_name}@test.local"
+      }
+    },
+    {
+      "action": "1003003",
+      "name": "2.4.3 删除子账户[1003003]",
+      "module": "多用户管理[1003]",
+      "endpoint": "subuser.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/多用户管理[1003]/057_2.4.3 删除子账户[1003003].md",
+      "skip_if": "!ctx.subuser_name",
+      "params": {
+        "subuser": "${ctx.subuser_name}"
+      }
+    },
+    {
+      "action": "1003004",
+      "name": "2.4.4 恢复子账户[1003004]",
+      "module": "多用户管理[1003]",
+      "endpoint": "subuser.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/多用户管理[1003]/058_2.4.4 恢复子账户[1003004].md",
+      "skip_if": "!ctx.subuser_name",
+      "params": {
+        "subuser": "${ctx.subuser_name}"
+      }
+    },
+    {
+      "action": "1002005",
+      "name": "2.3.5 查询问卷绑定[1002005]",
+      "module": "用户体系[1002]",
+      "endpoint": "usersystem.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/用户体系[1002]/053_2.3.5 查询问卷绑定[1002005].md",
+      "params": {
+        "sysid": "${env.sysid}",
+        "vid": "${ctx.usersystem_vid}"
+      }
+    },
+    {
+      "action": "1002006",
+      "name": "2.3.6 查询用户体系用户分配的问卷[1002006]",
+      "module": "用户体系[1002]",
+      "endpoint": "usersystem.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/用户体系[1002]/054_2.3.6 查询用户体系用户分配的问卷[1002006].md",
+      "params": {
+        "sysid": "${env.sysid}",
+        "uid": "${env.usersystem_uid}"
+      }
+    },
+    {
+      "action": "1002001",
+      "name": "2.3.1 添加参与者[1002001]",
+      "module": "用户体系[1002]",
+      "endpoint": "usersystem.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/用户体系[1002]/049_2.3.1 添加参与者[1002001].md",
+      "generate": {
+        "usersystem_uid_run": "api${uuid8}"
+      },
+      "params": {
+        "sysid": "${env.sysid}",
+        "auto_create_udept": 1,
+        "users": "[{\"uid\":\"${ctx.usersystem_uid_run}\",\"uname\":\"c1\",\"upass\":\"1234\",\"udept\":[\"a1\",\"b1\"]}]"
+      },
+      "extracts": {
+        "usersystem_created": "result"
+      }
+    },
+    {
+      "action": "1002002",
+      "name": "2.3.2 修改参与者[1002002]",
+      "module": "用户体系[1002]",
+      "endpoint": "usersystem.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/用户体系[1002]/050_2.3.2 修改参与者[1002002].md",
+      "skip_if": "!ctx.usersystem_uid_run",
+      "params": {
+        "sysid": "${env.sysid}",
+        "users": "[{\"uid\":\"${ctx.usersystem_uid_run}\",\"uname\":\"c1-upd\"}]"
+      }
+    },
+    {
+      "action": "1002003",
+      "name": "2.3.3 删除参与者[1002003]",
+      "module": "用户体系[1002]",
+      "endpoint": "usersystem.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/用户体系[1002]/051_2.3.3 删除参与者[1002003].md",
+      "skip_if": "!ctx.usersystem_created",
+      "params": {
+        "sysid": "${env.sysid}",
+        "uids": "[\"${ctx.usersystem_uid_run}\"]"
+      }
+    },
+    {
+      "action": "1004001",
+      "name": "2.5.1获取中奖者信息[1004001]",
+      "module": "红包奖品",
+      "endpoint": "default.aspx",
+      "qps": 100,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/红包奖品/062_2.5.1获取中奖者信息[1004001].md",
+      "params": {
+        "vid": "${ctx.smoke_vid}"
+      }
+    },
+    {
+      "action": "1005101",
+      "name": "2.6.7 部门列表[1005101]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/080_2.6.7 部门列表[1005101].md",
+      "params": {
+        "corpid": "${env.corpid}"
+      },
+      "extracts": {
+        "contact_dept_id": "data.0.id",
+        "contacts_enabled": "result"
+      }
+    },
+    {
+      "action": "1005102",
+      "name": "2.6.8 添加部门[1005102]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/081_2.6.8 添加部门[1005102].md",
+      "generate": {
+        "dept_suffix": "${uuid8}"
+      },
+      "skip_if": "!ctx.contacts_enabled",
+      "params": {
+        "corpid": "${env.corpid}",
+        "depts": "[\"SMOKE/${ctx.dept_suffix}\"]"
+      }
+    },
+    {
+      "action": "1005103",
+      "name": "2.6.9 修改部门[1005103]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/082_2.6.9 修改部门[1005103].md",
+      "pre": [
+        {
+          "action": "1005101",
+          "params": {
+            "corpid": "${env.corpid}"
+          },
+          "extracts": {
+            "dept_id": "data.0.id"
+          },
+          "retry_until": {
+            "path": "data.0.id",
+            "max": 10,
+            "sleep": 0.5
+          }
+        }
+      ],
+      "skip_if": "!ctx.contacts_enabled",
+      "params": {
+        "corpid": "${env.corpid}",
+        "depts": "[{\"id\":\"${ctx.dept_id}\",\"name\":\"SMOKE_UPD_${run_id}\",\"order\":1}]"
+      }
+    },
+    {
+      "action": "1005104",
+      "name": "2.6.10 删除部门[1005104]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/083_2.6.10 删除部门[1005104].md",
+      "skip_if": "!ctx.dept_id",
+      "params": {
+        "corpid": "${env.corpid}",
+        "type": "1",
+        "depts": "[\"${ctx.dept_id}\"]"
+      }
+    },
+    {
+      "action": "1005002",
+      "name": "2.6.1 添加或更新成员[1005002]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/075_2.6.1 添加或更新成员[1005002].md",
+      "generate": {
+        "contact_userid": "smoke${uuid10}",
+        "contact_mobile": "139${rand:10000000-99999999}"
+      },
+      "skip_if": "!ctx.contacts_enabled",
+      "params": {
+        "corpid": "${env.corpid}",
+        "users": "[{\"userid\":\"${ctx.contact_userid}\",\"name\":\"冒烟成员\",\"mobile\":\"${ctx.contact_mobile}\"}]",
+        "auto_create_udept": "1"
+      }
+    },
+    {
+      "action": "1005001",
+      "name": "2.6.1 查询成员[1005001]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 100,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/074_2.6.1 查询成员[1005001].md",
+      "skip_if": "!ctx.contact_userid",
+      "params": {
+        "corpid": "${env.corpid}",
+        "uid": "${ctx.contact_userid}"
+      }
+    },
+    {
+      "action": "1005004",
+      "name": "2.6.4 添加或修改管理员[1005004]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/077_2.6.4 添加或修改管理员[1005004].md",
+      "skip_if": "!ctx.contact_userid",
+      "params": {
+        "corpid": "${env.corpid}",
+        "users": "[{\"userid\":\"${ctx.contact_userid}\",\"role\":2}]"
+      },
+      "extracts": {
+        "contact_admin_created": "result"
+      }
+    },
+    {
+      "action": "1005005",
+      "name": "2.6.5 删除管理员[1005005]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/078_2.6.5 删除管理员[1005005].md",
+      "skip_if": "!ctx.contact_admin_created",
+      "params": {
+        "corpid": "${env.corpid}",
+        "uids": "${ctx.contact_userid}"
+      }
+    },
+    {
+      "action": "1005006",
+      "name": "2.6.6 恢复管理员[1005006]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/079_2.6.6 恢复管理员[1005006].md",
+      "skip_if": "!ctx.contact_userid",
+      "params": {
+        "corpid": "${env.corpid}",
+        "uids": "${ctx.contact_userid}"
+      }
+    },
+    {
+      "action": "1005202",
+      "name": "2.6.12 添加标签[1005202]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/085_2.6.12 添加标签[1005202].md",
+      "generate": {
+        "tag_suffix": "${uuid8}"
+      },
+      "skip_if": "!ctx.contacts_enabled",
+      "params": {
+        "corpid": "${env.corpid}",
+        "child_names": "[\"SMOKE/${ctx.tag_suffix}\"]",
+        "is_radio": "0"
+      }
+    },
+    {
+      "action": "1005201",
+      "name": "2.6.11 标签列表[1005201]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/084_2.6.11 标签列表[1005201].md",
+      "skip_if": "!ctx.contacts_enabled",
+      "params": {
+        "corpid": "${env.corpid}"
+      }
+    },
+    {
+      "action": "1005203",
+      "name": "2.6.13 修改标签[1005203]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/086_2.6.13 修改标签[1005203].md",
+      "pre": [
+        {
+          "action": "1005201",
+          "params": {
+            "corpid": "${env.corpid}"
+          },
+          "extracts": {
+            "tag_group_id": "data.0.id",
+            "child_tag_id": "data.0.childs.0.id"
+          }
+        }
+      ],
+      "skip_if": "!ctx.contacts_enabled",
+      "params": {
+        "corpid": "${env.corpid}",
+        "tp_id": "${ctx.tag_group_id}",
+        "child_names": "[{\"id\":\"${ctx.child_tag_id}\",\"name\":\"upd${uuid8}\"}]"
+      }
+    },
+    {
+      "action": "1005204",
+      "name": "2.6.14 删除标签[1005204]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/087_2.6.14 删除标签[1005204].md",
+      "skip_if": "!ctx.child_tag_id",
+      "params": {
+        "corpid": "${env.corpid}",
+        "type": "1",
+        "tags": "[\"${ctx.child_tag_id}\"]"
+      }
+    },
+    {
+      "action": "1005003",
+      "name": "2.6.3 删除成员[1005003]",
+      "module": "通讯录[1005]",
+      "endpoint": "contacts.aspx",
+      "qps": 10,
+      "na_hints": [
+        "混合云",
+        "用户体系",
+        "通讯录",
+        "360",
+        "奖品",
+        "未开通",
+        "不存在",
+        "未启用",
+        "未创建"
+      ],
+      "contract_file": "开放接口文档/通讯录[1005]/076_2.6.3 删除成员[1005003].md",
+      "skip_if": "!ctx.contact_userid",
+      "params": {
+        "corpid": "${env.corpid}",
+        "uids": "${ctx.contact_userid}"
+      }
+    },
+    {
+      "action": "1001201",
+      "name": "2.2.10 清空答卷数据[1001201]",
+      "module": "答卷[1001]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/答卷[1001]/047_2.2.10 清空答卷数据[1001201].md",
+      "skip_if": "!ctx.disposable_vid",
+      "params": {
+        "vid": "${ctx.disposable_vid}",
+        "username": "${ctx.account.main}",
+        "reset_to_zero": true
+      }
+    },
+    {
+      "action": "1000301",
+      "name": "2.1.9 删除问卷[1000301]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/030_2.1.9 删除问卷[1000301].md",
+      "skip_if": "!ctx.disposable_vid",
+      "params": {
+        "vid": "${ctx.disposable_vid}",
+        "username": "${ctx.account.main}"
+      }
+    },
+    {
+      "action": "1000302",
+      "name": "2.1.10 清空回收站[1000302]",
+      "module": "问卷[1000]",
+      "endpoint": "default.aspx",
+      "qps": 10,
+      "na_hints": [],
+      "contract_file": "开放接口文档/问卷[1000]/032_2.1.10 清空回收站[1000302].md",
+      "params": {
+        "username": "${ctx.account.main}"
+      }
+    }
+  ]
+}

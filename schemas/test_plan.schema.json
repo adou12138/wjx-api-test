@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["required", "optional", "exploratory", "blocked", "risk"],
+  "properties": {
+    "required": {"type": "array", "items": {"type": "string"}},
+    "optional": {"type": "array", "items": {"type": "string"}},
+    "exploratory": {"type": "array"},
+    "blocked": {"type": "array"},
+    "risk": {"type": "object"},
+    "dependencies": {
+      "type": "array",
+      "description": "契约正文显式声明的跨接口依赖，每条带原文证据；不做相似性推断。",
+      "items": {
+        "type": "object",
+        "required": ["target_action", "kind", "evidence"],
+        "properties": {
+          "target_action": {"type": "string"},
+          "target_name": {"type": "string"},
+          "kind": {"enum": ["depends_on", "companion_read"]},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "reason": {"type": "string"},
+          "evidence": {"type": "string", "description": "必须是契约原文的连续子串"},
+          "context": {"type": "string"},
+          "params": {"type": "object"},
+          "source": {"type": "string"},
+          "line": {"type": "integer"}
+        }
+      }
+    },
+    "dependency_unknowns": {
+      "type": "array",
+      "description": "疑似依赖但无法定位 action 的留痕项；不生成依赖、不生成用例。",
+      "items": {"type": "object"}
+    }
+  },
+  "additionalProperties": true
+}

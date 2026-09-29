@@ -1,0 +1,132 @@
+{
+  "_meta": {
+    "purpose": "G 维度安全测试载荷清单：清单驱动替代『想到哪测哪』。case_generator.py 按各类型的 applies_to 挑选载荷生成用例。",
+    "assertion_rule": "载荷应被安全过滤拦截（拒绝或净化）；被原样接受即缺陷；被正确拦截记「符合预期」非缺陷（陷阱3）。",
+    "content_safety_note": "内容安全≠代码安全：接口常防可执行代码但不防违规词（陷阱4），违规词类载荷单独标注，命中记真实缺口（N1/N2 类，见 references/issue_format.md）。",
+    "applies_to_note": "applies_to 条目分两种：类型名（string/str/text/varchar/char）按字段类型判定，语义标签（html/url/name…）与字段 semantics 求交。非字符串字段一律不注入——载荷全是字符串，注入 int/bool 只会得到类型错误，那不是安全缺陷而是参数校验。",
+    "lexicon_note": "内容安全类目（AD/ILLEGAL/ABUSE/PORN）为内置样本，可直接使用。约定：payloads[0] 为字面样本，payloads[1] 为同句**变体绕过**样本（全角字符/符号穿插/空格分隔/拼音混写），用于验证过滤是否只做字面匹配——变体绕过是内容安全最高发的漏拦前因；payloads[2] 起为备用池（受 limits 限量，默认只取前 2 条，上线时可按需轮换）。涉政敏感类**不内置样本**（合规要求），需从团队/监管词库接入：把样本追加进现有类别的 payloads，或新增同结构类别并写好 applies_to 即自动生效——生成器按 applies_to 匹配，无需改代码。",
+    "sanitize_note": "若接口走「净化后仍返回成功」策略（返回 result=true 但落库内容已被替换/屏蔽），实际内容已不可用即符合预期，不应记缺陷；请在判定时回读落库内容确认，再决定记「符合预期」还是缺口。",
+    "version": "1.1.0"
+  },
+  "categories": [
+    {
+      "id": "SQLI",
+      "name": "SQL 注入",
+      "applies_to": ["string"],
+      "expect_blocked": true,
+      "err_keywords": ["参数", "非法", "格式", "错误"],
+      "payloads": [
+        "' OR '1'='1",
+        "1; DROP TABLE users--",
+        "' UNION SELECT NULL,NULL--",
+        "admin'--"
+      ]
+    },
+    {
+      "id": "XSS",
+      "name": "XSS 跨站脚本",
+      "applies_to": ["html", "name"],
+      "expect_blocked": true,
+      "err_keywords": ["脚本", "注入", "安全", "非法"],
+      "payloads": [
+        "<script>alert(1)</script>",
+        "<img src=x onerror=alert(1)>",
+        "javascript:alert(document.cookie)"
+      ]
+    },
+    {
+      "id": "TRAV",
+      "name": "路径穿越",
+      "applies_to": ["url"],
+      "expect_blocked": true,
+      "err_keywords": ["路径", "非法", "不存在", "错误"],
+      "payloads": [
+        "../../etc/passwd",
+        "..\\..\\windows\\system32\\config\\sam"
+      ]
+    },
+    {
+      "id": "CMDI",
+      "name": "命令注入",
+      "applies_to": ["string"],
+      "expect_blocked": true,
+      "err_keywords": ["参数", "非法", "格式", "错误"],
+      "payloads": [
+        "; ls -la",
+        "| cat /etc/passwd",
+        "$(whoami)"
+      ]
+    },
+    {
+      "id": "CRLF",
+      "name": "CRLF 注入",
+      "applies_to": ["string"],
+      "expect_blocked": true,
+      "err_keywords": ["参数", "非法", "格式"],
+      "payloads": [
+        "value\r\nX-Injected: true"
+      ]
+    },
+    {
+      "id": "AD",
+      "name": "广告导流（垃圾信息）",
+      "applies_to": ["html", "name"],
+      "expect_blocked": true,
+      "err_keywords": ["违规", "敏感", "广告", "垃圾", "内容"],
+      "payloads": [
+        "加微信 abc123456 免费领取",
+        "加*微*信* abc123456 免费领取",
+        "加V信:abc_123",
+        "ＱＱ群 123456789 扫码进群",
+        "http://spam.example.test/invite?id=1"
+      ],
+      "note": "UGC 内容安全最高发类目（联系方式/外链/二维码引流）。payloads[1] 是 payloads[0] 的符号穿插变体：字面拦截通过、变体通过即为漏拦，属真实缺口。"
+    },
+    {
+      "id": "ILLEGAL",
+      "name": "违法违规（违禁品/非法交易）",
+      "applies_to": ["html", "name"],
+      "expect_blocked": true,
+      "err_keywords": ["违规", "敏感", "违禁", "禁止", "内容"],
+      "payloads": [
+        "代开发票",
+        "代 开 发 票",
+        "刷单兼职日结",
+        "银行卡出租出售",
+        "代考包过"
+      ],
+      "note": "非法交易关键词样本（代开票/刷单/卡证买卖/代考）。payloads[1] 为空格分隔变体，用于验证过滤是否做了归一化（去空白）后匹配。"
+    },
+    {
+      "id": "ABUSE",
+      "name": "辱骂（人身攻击）",
+      "applies_to": ["html", "name"],
+      "expect_blocked": true,
+      "err_keywords": ["违规", "敏感", "辱骂", "攻击", "内容"],
+      "payloads": [
+        "你是个傻子",
+        "你是个傻*",
+        "垃圾东西赶紧滚",
+        "你是个sha子"
+      ],
+      "note": "仅含轻度样本，不含严重侮辱/歧视词——严重级请从团队词库补齐。变体（星号掩码/拼音混写）是高频绕过前因，应在归一化后匹配。"
+    },
+    {
+      "id": "PORN",
+      "name": "色情低俗（引流话术）",
+      "applies_to": ["html", "name"],
+      "expect_blocked": true,
+      "err_keywords": ["违规", "敏感", "低俗", "色情", "内容"],
+      "payloads": [
+        "福利视频 加群领取",
+        "福 利 视 频 加群领取",
+        "同城上门服务"
+      ],
+      "note": "只收录「引流话术式」关键词样本，不含露骨描写；露骨词表属监管/团队词库范畴，外部接入后自动生效。"
+    }
+  ],
+  "limits": {
+    "max_payloads_per_field_per_category": 2,
+    "type_gated_categories": ["SQLI", "CMDI", "CRLF"]
+  }
+}

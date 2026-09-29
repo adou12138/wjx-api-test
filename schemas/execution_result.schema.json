@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["results", "findings", "coverage_plan"],
+  "properties": {
+    "results": {"type": "array"},
+    "findings": {"type": "array"},
+    "coverage_plan": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}
