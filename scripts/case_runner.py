@@ -940,21 +940,26 @@ def _check_concurrency(case, parsed, args):
 
     def _one(_i):
         try:
-            _c, _r, p = R.call(R.build_payload(action, **params))
-            return bool(isinstance(p, dict) and p.get("result") is True)
+            # 用 call_meta 拿到 (code, headers)：二者都来自这次 call 的返回值，同源一致。
+            # 不在并发段记台账，而是把 code/headers 带出来，待主线程显式传给 add_issue——
+            # 否则会读到被线程池污染的全局旁路 LAST_RESPONSE_HEADERS，request_id/trace_id
+            # 张冠李戴到同批次的另一条重复请求上。
+            code, _r, p, hdrs = R.call_meta(R.build_payload(action, **params))
+            return (bool(isinstance(p, dict) and p.get("result") is True), code, hdrs)
         except Exception:
-            return False
+            return (False, None, None)
 
     with ThreadPoolExecutor(max_workers=times) as ex:
         oks = list(ex.map(_one, range(times)))
-    success = sum(1 for x in oks if x)
+    success = sum(1 for x in oks if x[0])
     if unique_field and success > 1:
         R.add_issue(
             "[%s] 并发重复提交产生 %d 条成功（唯一键 %s 应只允许 1 条）"
             % (case.get("id"), success, unique_field), params, fid=case.get("id"),
             expected="同一唯一键并发提交只应成功 1 次",
             actual="并发 %d 次成功 %d 次" % (times, success),
-            severity="高", dimension=dim)
+            severity="高", dimension=dim,
+            http_code=oks[0][1], headers=oks[0][2])
         return
     note = ""
     if success > 1 and not unique_field:
@@ -963,7 +968,8 @@ def _check_concurrency(case, parsed, args):
         "[%s] 并发 %d 次：成功 %d 次、失败 %d 次%s"
         % (case.get("id"), times, success, times - success, note),
         params, fid=case.get("id"), expected="并发行为符合业务唯一性预期",
-        actual="成功 %d/%d" % (success, times), severity="低", dimension=dim)
+        actual="成功 %d/%d" % (success, times), severity="低", dimension=dim,
+        http_code=oks[0][1], headers=oks[0][2])
 
 
 def _check_rate_limit(case, parsed, args):

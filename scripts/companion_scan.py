@@ -10,6 +10,12 @@
   ② 契约文档显式声明（`read_action: 1000108`、`配套读接口`、`列表接口` 等）；
   ③ 同级目录扫描：同一契约目录下的兄弟文档，按「业务对象名匹配 + 动词分类」挑。
 
+第四级（只进候选、不自动填）：
+  ④ L5 知识库检索：契约是单文件 / 粘贴场景时 ③ 必然落空，改从兄弟 skill 的
+     showdoc_api_docs 按业务对象名捞候选。检索带模糊成分，候选只进 candidates
+     清单（origin=kb）供人工 --read-action 指定，绝不自动填——自动填会把
+     「对象名对上但语义不符的接口」伪装成已验证的往返。
+
 为什么不无脑猜：猜错会调一个不存在的 action，把 ENV 失败伪装成「往返已验证」，
 比不验更糟。所以扫描只在**业务对象名对得上**时才采用，并把候选清单与置信度
 写进产物供审计；执行期还有一层兜底——读接口返回结构与主接口提交字段交集为空时
@@ -97,6 +103,55 @@ def _score(title, obj_main, obj_cand):
     return hit, score
 
 
+# 知识库候选**每个来源**每类最多保留条数：检索按对象名子串匹配，命中可能很多，
+# 只保留得分最高的前 N 个，避免候选清单膨胀到没人看。合并同级扫描后清单可略多于 N。
+_KB_CANDIDATE_CAP = 3
+
+
+def _kb_companion_candidates(main_title, main_action=None):
+    """第四级来源：从 L5 知识库 showdoc_api_docs 按业务对象名捞配套接口候选。
+
+    复用 kb_load_contract 的文件系统/向量索引两路匹配；命中文件套与同级扫描
+    完全相同的 _split_title / _classify / _score 过滤标准。只返回候选清单，
+    是否采用由人决定（--read-action / --list-action）。
+    """
+    buckets = {"read": [], "list": []}
+    obj_main = _object_of(main_title or "")
+    if not obj_main:
+        return buckets
+    try:
+        from kb_load_contract import (default_kb_candidates, find_by_filesystem,
+                                      find_by_vector_index)
+    except Exception:
+        return buckets
+    kb_root = next((c for c in default_kb_candidates() if os.path.isdir(c)), None)
+    if not kb_root:
+        return buckets
+    paths = set(find_by_filesystem(kb_root, obj_main))
+    for rel_path, _title in find_by_vector_index(kb_root, obj_main):
+        cand = os.path.join(kb_root, rel_path)
+        if not os.path.isfile(cand):
+            cand = os.path.join(kb_root, "project", rel_path)
+        if os.path.isfile(cand):
+            paths.add(cand)
+    for p in sorted(paths):
+        title, act, raw = _split_title(p)
+        if not act or act == main_action:
+            continue
+        kind = _classify(raw)
+        if not kind:
+            continue
+        ok, sc = _score(raw, obj_main, _object_of(title))
+        if not ok:
+            continue
+        buckets[kind].append({"action": act, "title": raw, "score": sc,
+                              "file": os.path.basename(p), "origin": "kb"})
+    for k in buckets:
+        buckets[k].sort(key=lambda x: -x["score"])
+        buckets[k] = buckets[k][:_KB_CANDIDATE_CAP]
+    return buckets
+
+
 def parse_declared(text):
     """从契约正文解析显式声明的配套接口。命中即最高置信（人写下的，不是猜的）。"""
     out = {"read_action": None, "list_action": None, "read_params": None}
@@ -169,10 +224,21 @@ def resolve(contract_path, contract_text=None, cli_read=None, cli_list=None,
     """
     declared = parse_declared(contract_text or "")
     sib = scan_siblings(contract_path, main_action=main_action)
+    merged = {"read": list(sib["read"]), "list": list(sib["list"])}
+    # 第四级（保守）：知识库候选只进清单不自动填，供人工 --read-action 指定。
+    # 与同级扫描候选按 action 去重，kb 来源的条目带 origin="kb"。
+    main_title = _split_title(contract_path)[0] if contract_path else ""
+    kb = _kb_companion_candidates(main_title, main_action=main_action)
+    seen_acts = {x["action"] for k in ("read", "list") for x in sib[k]}
+    for k in ("read", "list"):
+        for c in kb[k]:
+            if c["action"] not in seen_acts:
+                merged[k].append(c)
+                seen_acts.add(c["action"])
     res = {
         "read_action": None, "list_action": None, "read_params": {},
         "source": "none", "confidence": "none",
-        "candidates": {"read": sib["read"], "list": sib["list"]},
+        "candidates": {"read": merged["read"], "list": merged["list"]},
         "declared": declared,
     }
     rp = cli_read_params or declared.get("read_params") or {}

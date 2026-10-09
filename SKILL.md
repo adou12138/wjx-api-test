@@ -1,8 +1,8 @@
 ---
 name: "wjx-api-test"
-version: "4.18.0"
+version: "4.21.1"
 agent_created: true
-description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 30 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。含 30 类维度框架、高频缺陷模式清单、18 条实测陷阱。**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
+description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 30 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。AF 业务场景 prompt 自动注入 L5 产品知识（检索失败自动降级为纯契约，不影响主流程）；配套接口解析在同级扫描落空时从 L5 知识库捞候选（只进清单不自动填，供人工 --read-action 指定）。含 30 类维度框架、高频缺陷模式清单、18 条实测陷阱。**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
 ---
 
 # wjx-api-test — 接口测试工作流
@@ -55,6 +55,12 @@ python scripts/precondition_scan.py --markdown --store runtime_dependencies.json
 
 python scripts/case_runner.py --cases cases.json --dry-run         # 声明式用例执行器
 python scripts/case_runner.py --cases cases.json --only B,H
+
+# 产物回读校验（交付前自检：编码/表头/列宽/编号/行数/证据链列）
+python scripts/artifact_readback.py --dir .                # 自动识别目录内台账与报告
+python scripts/artifact_readback.py --issues api_test_issues.csv --report api_test_report_full.json
+python scripts/artifact_readback.py --dir . --json readback.json      # 机器可读，供门禁消费
+python scripts/artifact_readback.py --dir . --strict                    # warning 也视为失败
 
 # 业务场景补充（AF 维度族，默认关闭，需显式启用）
 python scripts/business_scenarios.py --contract <契约路径> --prep --out prompt.md
@@ -112,6 +118,44 @@ WJX_BASE_URL=https://实际地址/实际路径 python scripts/api_test_runner.py
 
 > 设计原则：对"skill 自身输入错误"用硬拦截；对"做少了 / 静默漏测 / 输入自相矛盾"用门禁把风险从"靠人记"变成"靠代码卡"。默认温和（告警 + 记缺陷），仅在显式设 `WJX_STRICT_*` 时升级为 exit(2)。
 
+## 产物回读校验（脚本跑通 ≠ 产物可交付）
+
+前面三道门禁管的是"测得够不够"，这一道管**"写出去的台账还是不是那张表"**。
+
+陷阱 7 要求台账用 utf-8-sig、逗号分隔、含逗号/换行/引号的字段用引号包裹——但那曾经只是**文档里的一句约定**，写盘代码没有任何机制保证自己做到。少一个 BOM、某列忘了引号包裹、列定义改了而渲染层没跟上，Excel 里就是整张表错位，而**脚本 exit 0、报告"看起来完整"**，要等开发打开文件才暴露。
+
+`scripts/artifact_readback.py` 把约定变成可执行检查：读回自己刚写的产物，验编码 BOM、表头与列定义一致（顺序也算）、每行列数、编号非空且唯一、台账行数 vs `report_full.json` 里 `findings` 数、证据链七列是否真落进了 CSV。
+
+```bash
+python scripts/artifact_readback.py --dir .            # 有error → exit 1
+python scripts/artifact_readback.py --dir . --strict   # warning 也算失败（或 WJX_STRICT_READBACK=1）
+python scripts/artifact_readback.py --dir . --json readback.json   # 供门禁消费
+```
+
+`flow.py --execute` **执行完自动跑一遍**（结果落 `artifact_readback.json`），不用手敲。默认只出声不阻断——台账已经写出来了，回读的作用是让交付方看见问题，而不是把跑完的一轮变成失败；`WJX_STRICT_READBACK=1` 才升级为 exit(2)。**必须排在 `report_enhance` 之后**：增强会重写 CSV，放在它前面校验的是即将被替换的文件。
+
+**采集类字段由运行时自动填充**：`run()` 与 `assert_validation()` 都用局部包装把本次请求的 `http_code` 与响应头里的请求ID/TraceID（`X-Request-Id` / `X-Trace-Id` 等常见头名）交给台账，`call()` 返回值与 `_record_response_headers` 旁路缓存是数据来源。用局部包装而非在各分支逐一传参，是因为 `code` 只在函数入口拿得到，散着传必然漏，而漏掉的表现恰好是"那几列恒为空"——不报错的静默缺失。取不到就留空（空值是可见的"没采到"，填占位值反而是假的）。
+
+**为什么单独一个脚本而不是塞进 `coverage_gate()`**：门禁跑在写 CSV **之前**（缺口要进台账），回读必须跑在写盘**之后**，两者时序相反、职责也不同（一个判"该测没测"，一个判"写出去的对不对"）。塞在一起会让写盘动作发生两次。
+
+**报出问题该怎么读**：
+
+| 码 | 级别 | 含义 | 典型成因 |
+|---|---|---|---|
+| `NO_BOM` / `DECODE` | error | 编码不对，Excel 会乱码 | 用 `encoding="utf-8"` 而非 `utf-8-sig` |
+| `HEADER_MISMATCH` | error | 表头与 `assets/finding_columns.json` 不一致（含**顺序**不同） | 改了列定义但映射表没同步；或两套写盘路径表头不同源 |
+| `ROW_WIDTH` | error | 某行列数与表头不符 | 列错位，或含逗号/换行的字段没被引号包裹 |
+| `BLANK_ID` / `DUP_ID` | error | 编号为空或重复 | 空编号无法复盘引用；重复编号会让复测指向错条目 |
+| `ROW_COUNT` | error | 行数与 findings 数不符 | 有 finding 静默丢失——台账与报告对不上 |
+| `EV_COL_MISSING` | error | 证据链列缺失 | 台账无法支撑开发复现 |
+| `EV_ALL_EMPTY` | error | **全部**记录的采集类证据列（请求ID/TraceID/证据路径）为空 | 采集链没接上，开发无法复现 |
+| `EV_PART_EMPTY` / `EV_LEDGER_EMPTY` | warning | 部分记录无采集类证据 / 记录类列（置信度/归因/复测状态）未填 | 个别条目没采到，或归因环节跳步 |
+| `NO_PAIRED_REPORT` | warning | 没找到同前缀的报告，行数这次核不了 | 台账与报告前缀不一致 |
+
+**台账与报告按前缀配对，不按时间**：`X_issues.csv` ↔ `X_report_full.json`。一次运行常留下多个前缀的产物（`api_test_` / `chain_` / …），按最新时间挑会跨运行配错对，比出**根本不存在的"finding 静默丢失"**。找不到同前缀就降级为warning 并明说行数这次查不出来，不猜。
+
+**覆盖缺口之外的单列**：零缺陷是合法结果（不是缺口），空台账不会被误报成问题；报告文件缺失只降级为 warning 而非 error——它只用于交叉核对行数，不该拦住"只有台账"的单份交付。
+
 ## 契约驱动的自动生成（推荐入口 · 解决"做少了"）
 
 本 skill 的知识（30 维度框架 / 19 条缺陷模式 / 适用性矩阵 / 断言 helper）原本只是**文档**，每次靠人"读文档 → 设计用例 → 手写 Python"，覆盖率取决于当次注意力——这是"做少了却静默产出完整报告"的结构性根源。现把这些知识变成**可执行规则**：
@@ -133,7 +177,7 @@ WJX_BASE_URL=https://实际地址/实际路径 python scripts/api_test_runner.py
 **三条默认开启的深度链路**（单接口就能跑满，不依赖其他接口的业务知识）：
 
 - **越权矩阵（A）**：按「身份 × 操作面」铺开，而不是只给一条签名错误。身份轴跨企业 appid / 子账号 / 主账号对照 / 跨企业+主账号双重矛盾，操作面分写与读。读面用例是**配对对照**——先用本企业身份自证可读，再看跨企业身份能否读到；本企业也读不到时不判越权（那种拒绝多半是缺参数，判成"隔离生效"是假的通过）。身份一律用 `<跨企业appid>` / `<子账号>` / `<主账号>` 占位符承载，配置缺哪一项就点名跳过，绝不填空串冒充。
-- **交叉验证（C1）**：主接口说成功不算数。`companion_scan.py` 解析配套接口（命令行 > 契约显式声明 > 同级目录扫描，扫描只在业务对象名对得上时才采用并写清置信度），拿到读接口就做真往返，拿到列表接口就验「创建后资源出现在列表 / 总数 +1」。拿不到就留空并在待补清单点名，不拿主接口响应假装验过。计数基线在主请求**发出前**采集——check 内两次取数都已落在操作后，差值恒为 0。
+- **交叉验证（C1）**：主接口说成功不算数。`companion_scan.py` 解析配套接口（命令行 > 契约显式声明 > 同级目录扫描 > L5 知识库候选，扫描只在业务对象名对得上时才采用并写清置信度；知识库候选带模糊成分，只进候选清单不自动填，供人工 `--read-action` 指定），拿到读接口就做真往返，拿到列表接口就验「创建后资源出现在列表 / 总数 +1」。拿不到就留空并在待补清单点名，不拿主接口响应假装验过。计数基线在主请求**发出前**采集——check 内两次取数都已落在操作后，差值恒为 0。
 - **状态机与幂等（E / AC）**：有状态字段就跑**转换矩阵实测**（逐个目标状态提交 + 回读，产出接受/拒绝事实表）；合法性是业务语义不猜，只硬判「接受了但回读值被改写」这一确定缺陷。幂等与并发重复提交不依赖唯一键也能测：创建类接口重复提交产生多个对象只记观察（业务本就允许多条），结果漂移才判缺陷。
 - **零产出维度补齐（`dim_generators.py`）**：编码国际化 I（多字节 / emoji 代理对 / 全角 / RTL）、组合交叉 F（多字段同时异常）、请求追踪 V（标识非空且逐次不同）、批量 X（100 条与混入非法项）、导出下载 M（须给出可用下载凭据），以及按**字段特征触发**的业务域专项 N 层级 / Q 角色 / W 附件 / S 分类 / T 账号 / O 通知 / P 分享 / R 报告 / U 导入。三条约束：契约没有对应字段就不生成（造出来的是噪音，还会让"该维度已覆盖"变成假象）；预期说不清的（如顶级节点 parent 为空是否合法）一律 P2 + note 说明"业务允许则记符合预期"，不制造假缺陷；识别不到追踪/下载字段时记观察而非缺陷。
 
@@ -172,6 +216,11 @@ WJX_BASE_URL=https://实际地址/实际路径 python scripts/api_test_runner.py
 三步走（`scripts/business_scenarios.py`）：`--prep` 出 prompt → LLM 生成 JSON →
 `--save` 过门禁落盘 → `--merge` 并入主用例文件。**产物与 `case_schema.md` 完全一致，
 不需要任何转换层，合并后 `case_runner` 直接可执行。**
+
+`--prep` 出的 prompt 会自动附带从 L5 知识库检索到的产品行为参考（页面路径、按钮名、
+开关名、已上线功能口径），并明确声明**与契约冲突时一律以契约为准**、知识库没提的
+不臆造——让业务场景对齐真实产品而不是凭字段名想象。检索失败或知识库不可用时
+自动降级为纯契约 prompt，主流程不受影响。
 
 ```bash
 python scripts/business_scenarios.py --contract <契约路径> --prep --out prompt.md
@@ -326,6 +375,12 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 一律不参与判定，只有 `confirmed` 才生效，跨主体也不误吞（`attribution_engine` 对此有硬校验）。
 没有运行实证记录时，行为与接入前完全一致。
 
+**执行前自动就位依赖契约**：加载到 confirmed 依赖后，执行前按 `target_action` 解析目标接口
+契约并落盘 `runtime_dep_contracts.json`——先在**主契约同级目录**找（"契约集放一起"是推荐用法，
+本地命中就不查库），再按 action 从知识库定位，每条记 `origin`（local/kb）；都取不到的进
+`missing` 点名留痕。Agent 构造前置请求时直接用清单里的路径，不必再手动 `kb_load_contract`；
+缺契约的依赖按「缺料点名」处理，不猜不伪造、不阻断执行。
+
 ## 执行范围约定（重要 · 默认只在指定环境测）
 
 > **核心：测试只在用户当前指定的那一个环境进行，不需要多环境对比。**
@@ -405,7 +460,7 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 4. 内容安全 ≠ 代码安全：接口常防可执行代码但**不防违规词**，是真实缺口（N1/N2 类）。
 5. 多环境差异记 ENV、不擅判——但**多环境对比本身不是必做步骤**。
 6. 别被限流 / 防重提交污染结论（复测加随机串 + 间隔 ≥0.4s）。
-7. CSV 用 utf-8-sig 逗号分隔、含特殊字符用双引号包裹，否则 Excel 错位。
+7. CSV 用 utf-8-sig 逗号分隔、含特殊字符用双引号包裹，否则 Excel 错位；交付前用 `artifact_readback.py` 回读校验。
 8. 连接异常重试后仍失败 → ENV，不计业务缺陷。
 9. 测试地址必须取自接口文档『接口地址』，禁止写死默认域名。
 10. 不是每个接口都支持所有功能——先判适用性，不支持标 N/A，不强行套用。
@@ -434,8 +489,8 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 
 **方法论与规范**（`references/`）：`framework.md`（30 维度 + §9 断言/验证矩阵 + §11 数据管理）· `applicability_matrix.md` · `defect_patterns.md` · `doc_review.md` · `smoke_testing.md` · `ui_baseline.md` · `env_config.md` · `issue_format.md` · `case_schema.md` · `auto_generation.md` · `personal_config.md` · `intelligence_policy.md` · `attribution_rules.md` · `adapter_contract.md` · `real_smoke_delivery.md` · `pattern_candidates.md` · `traps.md`
 
-**执行资产**（`scripts/`、`adapters/`）：入口 `flow.py` · `api_test_runner.py`（运行器模板，台账列口径 `FINDING_CSV_COLS` 唯一来源）· `smoke_runner.py` · `case_runner.py` · `kb_load_contract.py` · `personal_config.py`；生成链 `contract_parser.py`（ShowDoc/OpenAPI 3.x/Swagger 2.0，JSON+YAML，$ref 与嵌套递归展开）· `contract_model.py` · `field_semantics.py` · `applicability.py` · `pattern_engine.py` · `case_generator.py` · `business_scenarios.py`（AF 业务场景补充生成 + 六项门禁）· `companion_scan.py`（配套接口解析：越权读面 / 真往返 / 列表与计数交叉验证的入口）· `dim_generators.py`（零产出维度补齐：编码国际化 / 组合交叉 / 请求追踪 / 批量 / 导出下载 / 按字段特征触发的业务域专项）· `llm_semantics.py`（语义层接入：大模型读契约产出事实、机械校验后并入，可选且不传时零影响）· `llm_fact_cases.py`（语义层兑付：把并入的事实转成用例，没并入就一条不产）；闭环 `assertion_engine.py` · `attribution_engine.py` · `evidence_bundle.py` · `minimizer.py` · `regression.py` · `asset_registry.py` · `relationship_inference.py` · `risk_engine.py` · `plan_builder.py` · `report_enhance.py` · `pattern_feedback.py` · `ui_baseline.py`；适配器 `adapters/base.py` · `adapters/rest.py` · `adapters/sojump.py`（公共参数、鉴权、写操作门禁）· `adapters/graphql.py`（HTTP 200+errors 判失败，反假通过）· `adapters/grpc.py`（懒加载 grpcio，缺依赖实例化即报错）；结构约束 `schemas/contract_model.schema.json` · `schemas/test_plan.schema.json` · `schemas/execution_result.schema.json` · `schemas/finding.schema.json` · `schemas/regression_baseline.schema.json`
+**执行资产**（`scripts/`、`adapters/`）：入口 `flow.py` · `api_test_runner.py`（运行器模板，渲染 `FINDING_CSV_COLS` 台账行）· `smoke_runner.py` · `case_runner.py` · `kb_load_contract.py` · `personal_config.py`；生成链 `contract_parser.py`（ShowDoc/OpenAPI 3.x/Swagger 2.0，JSON+YAML，$ref 与嵌套递归展开）· `contract_model.py` · `field_semantics.py` · `applicability.py` · `pattern_engine.py` · `case_generator.py` · `business_scenarios.py`（AF 业务场景补充生成 + 六项门禁 + prompt 自动注入 L5 产品知识）· `companion_scan.py`（配套接口解析：越权读面 / 真往返 / 列表与计数交叉验证的入口；同级扫描落空时从 L5 知识库捞候选，只进清单不自动填）· `dim_generators.py`（零产出维度补齐：编码国际化 / 组合交叉 / 请求追踪 / 批量 / 导出下载 / 按字段特征触发的业务域专项）· `llm_semantics.py`（语义层接入：大模型读契约产出事实、机械校验后并入，可选且不传时零影响）· `llm_fact_cases.py`（语义层兑付：把并入的事实转成用例，没并入就一条不产）；闭环 `assertion_engine.py` · `attribution_engine.py` · `artifact_readback.py`（产物回读校验：写盘后读回验编码/表头/列宽/编号/行数/证据链列）· `evidence_bundle.py` · `minimizer.py` · `regression.py` · `asset_registry.py` · `relationship_inference.py` · `risk_engine.py` · `plan_builder.py` · `report_enhance.py` · `pattern_feedback.py` · `ui_baseline.py`；适配器 `adapters/base.py` · `adapters/rest.py` · `adapters/sojump.py`（公共参数、鉴权、写操作门禁）· `adapters/graphql.py`（HTTP 200+errors 判失败，反假通过）· `adapters/grpc.py`（懒加载 grpcio，缺依赖实例化即报错）；结构约束 `schemas/contract_model.schema.json` · `schemas/test_plan.schema.json` · `schemas/execution_result.schema.json` · `schemas/finding.schema.json` · `schemas/regression_baseline.schema.json`
 
-**配置与实例资产**（`assets/`）：占位模板 `personal_config.example.json` · `intelligent_config.example.json`（`flow.py --config`：`environment` 写门禁 / `execution` 档位与限流 / `inputs` 契约与基线）· `ui_baseline.example.json`（`template: true`，加载器主动跳过，防示范值造假缺陷）· `smoke_config.example.json` · `security_payloads.json`（G 维度安全载荷清单，case_generator 按语义标签选用）；问卷星参考实例 `smoke_config_wjx.json` · `smoke_cases_wjx.json` · `smoke_hooks_wjx.py`；说明与模板 `配置参数说明.md`（配置项 ↔ 接口参数 ↔ 中文含义）· `issue_template.csv`
+**配置与实例资产**（`assets/`）：`finding_columns.json`（**台账列口径唯一来源**，深度流程与冒烟共用；改列名/增删列改这里，渲染层 `finding_row` 按它逐列取值，缺登记的表头在加载期就点名，不静默渲染成空值）· 占位模板 `personal_config.example.json` · `intelligent_config.example.json`（`flow.py --config`：`environment` 写门禁 / `execution` 档位与限流 / `inputs` 契约与基线）· `ui_baseline.example.json`（`template: true`，加载器主动跳过，防示范值造假缺陷）· `smoke_config.example.json` · `security_payloads.json`（G 维度安全载荷清单，case_generator 按语义标签选用）；问卷星参考实例 `smoke_config_wjx.json` · `smoke_cases_wjx.json` · `smoke_hooks_wjx.py`；说明与模板 `配置参数说明.md`（配置项 ↔ 接口参数 ↔ 中文含义）· `issue_template.csv`
 
 > **真实凭据存放纪律**：个人真实配置统一放**包外** `~/.workbuddy/wjx-api-test/personal_config.json`（或 `WJX_CONFIG` 指定路径）；包内只保留 `*.example.json` 占位模板。真实环境实例（含页面基线）同样放包外并用参数显式指定。

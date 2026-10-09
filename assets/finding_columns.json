@@ -1,0 +1,40 @@
+{
+  "schema_note": "台账列口径定义。改列名/增删列改这里，不要改 api_test_runner.py。加载失败时回退脚本内置默认列（DEFAULT_COLS），保证包在缺文件时仍能跑。",
+  "version": "4.21.0",
+  "finding_columns": [
+    {"key": "id", "header": "编号", "note": "finding 编号，跨报告稳定标识"},
+    {"key": "kind", "header": "类型", "note": "缺陷 / 待确认 / 环境风险 / 符合预期 / 已确认非问题"},
+    {"key": "severity", "header": "严重程度"},
+    {"key": "status", "header": "状态"},
+    {"key": "dimension", "header": "维度", "note": "触发该问题的维度编号，如 B8 / H9"},
+    {"key": "desc", "header": "问题描述", "note": "现象口吻描述"},
+    {"key": "request", "header": "请求Body", "note": "真实完整报文，必须含 encode/appid/action/sign/ts（陷阱18）"},
+    {"key": "expected", "header": "预期结果"},
+    {"key": "actual", "header": "实际结果", "note": "含最小复现请求附加信息"},
+    {"key": "confidence", "header": "置信度"},
+    {"key": "http_code", "header": "HTTP状态码"},
+    {"key": "request_id", "header": "请求ID"},
+    {"key": "trace_id", "header": "TraceID"},
+    {"key": "evidence_path", "header": "证据路径"},
+    {"key": "attribution", "header": "归因"},
+    {"key": "retest_status", "header": "复测状态"}
+  ],
+  "smoke_finding_columns": [
+    {"key": "编号", "note": "冒烟台账沿用深度台账列口径"},
+    {"key": "类型"},
+    {"key": "严重程度"},
+    {"key": "状态"},
+    {"key": "维度"},
+    {"key": "问题描述"},
+    {"key": "请求Body"},
+    {"key": "预期结果"},
+    {"key": "实际结果"},
+    {"key": "置信度"},
+    {"key": "HTTP状态码"},
+    {"key": "请求ID"},
+    {"key": "TraceID"},
+    {"key": "证据路径"},
+    {"key": "归因"},
+    {"key": "复测状态"}
+  ]
+}

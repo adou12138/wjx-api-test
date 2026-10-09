@@ -112,13 +112,95 @@ def expected_count(contract):
     return max(AF_MIN_CASES, min(AF_MAX_CASES, want))
 
 
+# L5 知识注入的规模约束：prompt 膨胀会稀释契约事实的注意力，限量是硬要求。
+L5_MAX_DOCS = 4          # 最多注入的命中文档数
+L5_SNIPPET_CHARS = 600   # 每条 snippet 截断长度
+
+# 兄弟 skill 缺失只提醒一次：批量生成时每个接口都报一遍等于刷屏，反而淹没真警告。
+_l5_warned = set()
+
+
+def _warn_once(key, msg):
+    if key not in _l5_warned:
+        _l5_warned.add(key)
+        sys.stderr.write(msg)
+
+
+def _l5_skill_root():
+    """定位兄弟 skill qa-req2testcase-generator 的根目录（tools/knowledge 所在）。
+
+    与 kb_load_contract.default_kb_candidates 同一套回退逻辑：skill 可能经
+    「真实目录」或「junction」两种路径被调用，分别基于 abspath 与 realpath
+    计算候选，取第一个实际存在的目录。找不到返回 None。
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    skill_parent = os.path.dirname(os.path.dirname(here))
+    cands = [os.path.join(skill_parent, "qa-req2testcase-generator")]
+    real_parent = os.path.dirname(os.path.dirname(os.path.realpath(here)))
+    cand2 = os.path.join(real_parent, "qa-req2testcase-generator")
+    if os.path.normpath(cand2) != os.path.normpath(cands[0]):
+        cands.append(cand2)
+    for c in cands:
+        if os.path.isdir(os.path.join(c, "tools", "knowledge")):
+            return c
+    return None
+
+
+def _l5_knowledge(facts):
+    """从 L5 知识库检索与该接口相关的产品知识（页面路径/按钮名/开关名/业务规则）。
+
+    检索失败或知识库不可用时返回空串，prompt 与未接入时完全一致——
+    接入是增量不是依赖；失败在 stderr 出声，不静默。
+    """
+    try:
+        skill_dir = _l5_skill_root()
+        if not skill_dir:
+            _warn_once("no_skill", "警告：未找到 qa-req2testcase-generator 的 knowledge 模块，"
+                                   "AF prompt 不含 L5 知识注入（本次会话不再重复提示）\n")
+            return ""
+        tools_dir = os.path.join(skill_dir, "tools")
+        if tools_dir not in sys.path:
+            # append 而非 insert(0)：兄弟 skill 的 tools 目录不该遮蔽本 skill
+            # 及标准库的同名模块——检索失败可降级，模块被遮蔽是更隐蔽的坏。
+            sys.path.append(tools_dir)
+        from knowledge import l5_retrieval as L  # noqa: E402
+
+        query = " ".join(x for x in (facts.get("name"), facts.get("action")) if x)
+        hits = L.retrieve(skill_dir, query, step="P6", max_docs=L5_MAX_DOCS)
+        lines = []
+        for h in hits:
+            snippet = (h.get("snippet") or "").strip()
+            if not snippet:
+                continue
+            title = h.get("title") or ""
+            src = h.get("source") or "kb"
+            lines.append("- 【%s】%s\n  %s" % (src, title, snippet[:L5_SNIPPET_CHARS]))
+        if not lines:
+            return ""
+        return "\n".join(lines)
+    except Exception as e:  # 检索任何异常都不阻断 AF 主流程
+        _warn_once("retrieve_fail", "警告：L5 业务知识检索失败，AF prompt 将不含知识注入"
+                                    "（本次会话不再重复提示）：%s\n" % e)
+        return ""
+
+
 def build_prompt(contract):
-    """生成给 LLM 的 prompt：只给契约事实 + 输出格式 + 边界要求。"""
+    """生成给 LLM 的 prompt：契约事实 + L5 产品知识参考（如有）+ 输出格式 + 边界要求。"""
     facts = business_facts(contract)
     want = expected_count(contract)
     dim_desc = "\n".join("  - %s %s" % (k, v) for k, v in AF_DIMS.items())
     req = json.dumps(facts["request"], ensure_ascii=False, indent=2)
     resp = json.dumps(facts["response"], ensure_ascii=False, indent=2)
+
+    kb_block = _l5_knowledge(facts)
+    kb_section = ""
+    if kb_block:
+        kb_section = (
+            "\n## L5 产品知识参考（检索自知识库）\n"
+            "用途：对齐真实产品行为——页面路径、按钮名、开关名、已上线功能的口径。\n"
+            "**与契约冲突时一律以契约为准；这里没有提到的知识不要臆造，"
+            "参数只能用上面契约字段。**\n%s\n" % kb_block
+        )
 
     return """你是接口测试设计专家。请基于下面的接口契约，设计业务场景用例。
 
@@ -132,7 +214,7 @@ def build_prompt(contract):
 
 ## 响应字段
 {resp}
-
+{kb_section}
 ## 你要产出的东西
 业务场景用例——即"用户实际会怎么用这个接口"的场景。
 
@@ -167,7 +249,7 @@ def build_prompt(contract):
 - contract_keys 只填上面响应字段里真实存在的字段名。
 - 直接输出 JSON 数组，不要 markdown 代码块，不要解释。
 """.format(name=facts["name"], action=facts["action"], endpoint=facts["endpoint"],
-           req=req, resp=resp, dim_desc=dim_desc, want=want)
+           req=req, resp=resp, dim_desc=dim_desc, want=want, kb_section=kb_section)
 
 
 def _tokens(text):

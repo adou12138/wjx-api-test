@@ -284,9 +284,10 @@ def add_finding(fid, kind, desc, payload, expected="", actual="", severity="", s
     """统一问题记录。kind: 缺陷|待确认|已确认非问题|符合预期|环境风险
     dimension: 所属维度编号（如 B8-2 / AA3 / H9），用于按维度统计缺陷产出、反哺 defect_patterns.md。
 
-    台账列与 case_runner.CSV_COLS 一一对应：扩展列（置信度 / HTTP状态码 / 请求ID / TraceID /
-    证据路径 / 归因 / 复测状态）在此一并落库——此前只有列没有值，导出的 CSV 里这 7 列恒为空，
-    消费方看到的是一张"看起来有证据链、其实全空"的表。"""
+    台账列与 case_runner.CSV_COLS 一一对应。采集三列（HTTP状态码 / 请求ID / TraceID）
+    通常由调用方经 auto_evidence() 自动填入（run() / assert_validation() 已接好），
+    直接调本函数时需自己带 http_code / request_id / trace_id。
+    """
     findings.append({
         "id": fid, "kind": kind, "desc": desc,
         "request": json.dumps(complete_request_body(payload), ensure_ascii=False),
@@ -303,9 +304,58 @@ def add_finding(fid, kind, desc, payload, expected="", actual="", severity="", s
 # 台账列口径的**唯一来源**：深度流程（本模块 write_csv）与声明式执行器（case_runner.write_reports）
 # 共用这一份列定义与渲染函数，避免"同一份台账两套表头"（曾经深度流程只导 9 列，
 # 扩展列虽已落库却在 CSV 里被截断，消费方看到的是一张没有证据链的表）。
-FINDING_CSV_COLS = ["编号", "类型", "严重程度", "状态", "维度", "问题描述", "请求Body",
-                    "预期结果", "实际结果", "置信度", "HTTP状态码", "请求ID", "TraceID",
-                    "证据路径", "归因", "复测状态"]
+#
+# 列定义外置在 assets/finding_columns.json：改列名或增删列改那个文件，不必动代码。
+# assets 缺失或损坏时回退下面的内置默认列——包在缺文件时仍能跑，且出声告知。
+DEFAULT_FINDING_COLS = ["编号", "类型", "严重程度", "状态", "维度", "问题描述", "请求Body",
+                        "预期结果", "实际结果", "置信度", "HTTP状态码", "请求ID", "TraceID",
+                        "证据路径", "归因", "复测状态"]
+
+
+# finding 的英文键 ↔ 台账表头中文列名。finding_row 按 FINDING_CSV_COLS 取值，
+# 所以增删列只需改 assets/finding_columns.json 与这张映射表，不用改渲染逻辑。
+_FINDING_FIELD_KEYS = {
+    "编号": "id", "类型": "kind", "严重程度": "severity", "状态": "status",
+    "维度": "dimension", "问题描述": "desc", "请求Body": "request",
+    "预期结果": "expected", "实际结果": "actual", "置信度": "confidence",
+    "HTTP状态码": "http_code", "请求ID": "request_id", "TraceID": "trace_id",
+    "证据路径": "evidence_path", "归因": "attribution", "复测状态": "retest_status",
+}
+
+
+def _load_finding_cols_from(path):
+    """从指定路径读台账列名，失败回退内置默认列并返回告警文案（告警为 None 表示正常）。"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cols = [c["header"] for c in json.load(f)["finding_columns"]]
+        if not cols or not all(isinstance(c, str) and c for c in cols):
+            raise ValueError("列定义为空或含非法表头：%r" % (cols,))
+        return cols, None
+    except Exception as e:
+        return list(DEFAULT_FINDING_COLS), \
+            "台账列定义读取失败（%s: %s），已回退内置默认列；改列名请编辑 assets/finding_columns.json" \
+            % (type(e).__name__, e)
+
+
+def _load_finding_cols():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "assets", "finding_columns.json")
+    cols, warn = _load_finding_cols_from(path)
+    if warn:
+        print("⚠️ " + warn)
+    return cols, warn
+
+
+FINDING_CSV_COLS, FINDING_COLS_WARN = _load_finding_cols()
+
+# 加载期即点名未知表头：新增一列却忘了加映射键时，finding_row 会把它渲染成空值，
+# 而空值不报错——整列证据链悄悄消失，正是本模块要防的那类静默失败。
+_UNKNOWN_HEADERS = [h for h in FINDING_CSV_COLS if h not in _FINDING_FIELD_KEYS]
+if _UNKNOWN_HEADERS:
+    _msg = ("台账列定义含未登记映射的表头 %s，对应单元格将渲染为空值；"
+            "请在 assets/finding_columns.json 与 _FINDING_FIELD_KEYS 中同步登记" % (_UNKNOWN_HEADERS,))
+    print("⚠️ " + _msg)
+    FINDING_COLS_WARN = " | ".join(x for x in (FINDING_COLS_WARN, _msg) if x)
 
 
 def _clip_cell(text, limit=500):
@@ -318,26 +368,72 @@ def finding_row(x):
     """把一条 finding 渲染成与 FINDING_CSV_COLS 对齐的一行（含失败最小复现附加信息）。
 
     超长单元格（如 UI 代理用例的长文本 payload）截断到 500 字并标明原始长度——
-    截断只发生在 CSV 渲染层，findings 本体与 report_full.json 保留全文作证据。"""
+    截断只发生在 CSV 渲染层，findings 本体与 report_full.json 保留全文作证据。
+
+    按当前列定义逐列取值：列定义里出现未知表头时填空值并已在加载期校验过非空，
+    不静默错位（错位会让整张台账的证据链整体偏移，是最难发现的静默失败）。"""
     actual = x.get("actual", "")
     if x.get("minimal_repro"):
         actual = "%s ；最小复现请求：%s" % (actual, x["minimal_repro"])
-    return [
-        x.get("id", ""), x.get("kind", ""), x.get("severity", ""), x.get("status", ""),
-        x.get("dimension", ""), _clip_cell(x.get("desc", "")), _clip_cell(x.get("request", "")),
-        _clip_cell(x.get("expected", "")), _clip_cell(actual),
-        x.get("confidence", ""), x.get("http_code", ""), x.get("request_id", ""),
-        x.get("trace_id", ""), x.get("evidence_path", ""), x.get("attribution", ""),
-        x.get("retest_status", ""),
-    ]
+    out = []
+    for header in FINDING_CSV_COLS:
+        key = _FINDING_FIELD_KEYS.get(header)
+        val = x.get(key, "") if key else ""
+        # 「实际结果」列取上面拼好的 minimal_repro 版本，其余列直接取 finding 原值
+        if header == "实际结果":
+            val = actual
+        # desc / request / expected / actual 是长文本列，超长截断并标明原始长度
+        if header in ("问题描述", "请求Body", "预期结果", "实际结果"):
+            val = _clip_cell(val)
+        out.append(val)
+    return out
 
 
-def add_issue(desc, payload, fid="", expected="", actual="", severity="中", dimension=""):
-    add_finding(fid, "缺陷", desc, payload, expected, actual, severity, "待修复", dimension=dimension)
+def extract_request_ids(headers):
+    """从响应头提取请求ID / TraceID，用于台账证据链。
+
+    服务端把链路ID放在响应头是通行做法，但**头名各系统不统一**，故按常见候选名
+    逐个匹配（大小写不敏感）。取不到就返回空串——台账留空是可见的"没采到"，
+    比填一个占位值更诚实。
+    """
+    if not headers:
+        return "", ""
+    lower = {str(k).lower(): v for k, v in dict(headers).items()}
+    rid_keys = ("x-request-id", "request-id", "x-requestid", "x-rid",
+                "x-correlation-id", "x-cid")
+    tid_keys = ("x-trace-id", "trace-id", "x-traceid", "x-b3-traceid", "x-tid",
+                "x-amzn-trace-id", "x-ot-span-trace-id")
+    rid = next((lower[k] for k in rid_keys if lower.get(k)), "")
+    tid = next((lower[k] for k in tid_keys if lower.get(k)), "")
+    return str(rid or ""), str(tid or "")
 
 
-def add_observation(desc, payload, fid="", expected="", actual="", severity="中", dimension=""):
-    add_finding(fid, "待确认", desc, payload, expected, actual, severity, "待确认", dimension=dimension)
+def auto_evidence(http_code=None, headers=None):
+    """按响应事实自动填台账的采集类字段。
+
+    存在的理由：HTTP 状态码是 `call()` 返回值的第一项、响应头早已由
+    `_record_response_headers` 旁路采好，但两者都没接进台账——**输入全在手上，
+    只是没人把它们交给 add_issue**，导出的 CSV 里这几列恒为空。
+    签名按"只传拿得到的"设计：headers 省略时回退读旁路缓存。
+    """
+    if headers is None:
+        headers = LAST_RESPONSE_HEADERS
+    rid, tid = extract_request_ids(headers)
+    return {"http_code": http_code, "request_id": rid, "trace_id": tid}
+
+
+def add_issue(desc, payload, fid="", expected="", actual="", severity="中", dimension="",
+              http_code=None, headers=None):
+    ev = auto_evidence(http_code, headers)
+    add_finding(fid, "缺陷", desc, payload, expected, actual, severity, "待修复",
+                dimension=dimension, **ev)
+
+
+def add_observation(desc, payload, fid="", expected="", actual="", severity="中",
+                    dimension="", http_code=None, headers=None):
+    ev = auto_evidence(http_code, headers)
+    add_finding(fid, "待确认", desc, payload, expected, actual, severity, "待确认",
+                dimension=dimension, **ev)
 
 
 def assert_non_empty(items, label="断言集合"):
@@ -1489,6 +1585,19 @@ def run(case_no, name, action, expect_success, category,
     result = parsed.get("result") if isinstance(parsed, dict) else None
     errmsg = str(parsed.get("errormsg", "")) if isinstance(parsed, dict) else ""
 
+    # 本次请求的采集事实（HTTP 状态码 + 响应头里的请求ID/TraceID）自动接进台账。
+    # 用局部包装而非在各分支逐一传参：code 只在这里拿得到，散着传必然漏，
+    # 而漏掉的表现恰好是"那几列恒为空"——不报错的静默缺失。
+    _ev = auto_evidence(code)
+
+    def add_issue(*a, **kw):        # noqa: N807 局部遮蔽，仅在本函数内补采集字段
+        kw.setdefault("http_code", _ev["http_code"])
+        return globals()["add_issue"](*a, **kw)
+
+    def add_observation(*a, **kw):  # noqa: N807 同上
+        kw.setdefault("http_code", _ev["http_code"])
+        return globals()["add_observation"](*a, **kw)
+
     # HTTP 5xx 一律记问题
     if code >= 500:
         add_issue(f"[{case_no}]{name} 服务端返回 {code}", payload, fid=case_no,
@@ -1603,6 +1712,17 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
     code, raw, parsed = call(payload, retries=RETRY_COUNT)
     result = parsed.get("result") if isinstance(parsed, dict) else None
     errmsg = str(parsed.get("errormsg", "")) if isinstance(parsed, dict) else ""
+
+    # 同run()：把本次请求的采集事实自动接进台账，避免这两列恒为空
+    _ev = auto_evidence(code)
+
+    def add_issue(*a, **kw):        # noqa: N807 局部遮蔽
+        kw.setdefault("http_code", _ev["http_code"])
+        return globals()["add_issue"](*a, **kw)
+
+    def add_observation(*a, **kw):  # noqa: N807 局部遮蔽
+        kw.setdefault("http_code", _ev["http_code"])
+        return globals()["add_observation"](*a, **kw)
 
     # HTTP 5xx 一律记问题
     if code >= 500:

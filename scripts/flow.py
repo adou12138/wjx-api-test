@@ -45,6 +45,42 @@ from plan_builder import build_plan  # noqa: E402
 import dependency_scan  # noqa: E402
 import plan_render  # noqa: E402
 import precondition_scan  # noqa: E402
+import artifact_readback  # noqa: E402
+
+
+def verify_artifacts(out_dir, csv_path):
+    """产物回读校验：有 error 级问题就出声，并把机器可读结果落盘。
+
+    默认不阻断执行——台账已经写出来了，回读的作用是**让交付方看见**
+    "表结构不对/ 证据链空/ finding 丢了"，而不是把已跑完的一轮变成失败。
+    设 WJX_STRICT_READBACK=1 才升级为 exit(2)，与覆盖率门禁同一套严格度约定。
+
+    返回 error 数，便于调用方按需处理。
+    """
+    issues, summary = artifact_readback.run_readback(dirpath=out_dir, issues_csv=csv_path)
+    errors = [i for i in issues if i["severity"] == artifact_readback.ERROR]
+    warnings = [i for i in issues if i["severity"] == artifact_readback.WARNING]
+
+    rb_path = os.path.join(out_dir, "artifact_readback.json")
+    try:
+        with open(rb_path, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print("⚠️ 回读结果落盘失败（%s），校验结论仍见上方输出" % e)
+
+    if not errors and not warnings:
+        print("\n产物回读通过：台账编码 / 表头 / 列宽 / 编号 / 行数一致，可交付。")
+        return 0
+    print("\n产物回读发现问题（详见 %s）：" % rb_path)
+    for it in issues:
+        icon = "✗" if it["severity"] == artifact_readback.ERROR else "!"
+        print("  %s [%s] %s" % (icon, it["severity"].upper(), it["message"]))
+    if errors:
+        print("  → 台账结构有问题，交付前必须修正（脚本执行成功 ≠ 产物可交付）。")
+    if os.environ.get("WJX_STRICT_READBACK") == "1" and (errors or warnings):
+        print("  → WJX_STRICT_READBACK=1，升级为失败退出。")
+        sys.exit(2)
+    return len(errors)
 
 # 写操作类接口：未通过测试环境写门禁时，一律不自动执行（只出计划并要求显式授权）。
 WRITE_OPS = ("创建", "新增", "修改", "更新", "删除", "发布", "下线", "导入", "订阅", "清空")
@@ -59,10 +95,16 @@ PROFILES = {
 
 
 def build_adapter(name):
-    """按 --adapter 选择适配器。适配器负责公共参数、鉴权与写操作门禁。
+    """按 --adapter 选择适配器。
 
-    支持：rest（默认）/ sojump / graphql / grpc。
+    支持：rest / sojump / graphql / grpc；名称未匹配时 fallback 到 rest。
     grpc 缺依赖时实例化即报错（懒加载防呆，不静默降级）。
+
+    两点容易误读的地方：
+    - 主流程未显式指定时注入的是 **sojump**（见 main 的 adapter_name 默认值），
+      好让写操作门禁默认生效——这是有意的保守默认，不能按"rest 默认"去理解。
+    - 适配器在当前主链路**只用于写操作门禁**（is_write_allowed）；公共参数由
+      api_test_runner 负责、实际发请求也走它，build_request/send 等是预留扩展点。
     """
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -231,6 +273,27 @@ def resolve_contract_from_kb(action, kb=None):
     return None
 
 
+def find_local_dep_contract(action, near=None):
+    """在同级目录找该 action 的契约文件（"契约集放一起"是本 skill 推荐的用法）。
+
+    只按文件名校验 action 号是否出现，与 kb_load_contract 的文件系统匹配同一标准，
+    不做相似性推断。找不到返回 None。
+    """
+    if not action or not near:
+        return None
+    d = os.path.dirname(os.path.abspath(near))
+    if not os.path.isdir(d):
+        return None
+    try:
+        names = sorted(os.listdir(d))
+    except Exception:
+        return None
+    for n in names:
+        if n.lower().endswith(".md") and str(action) in n:
+            return os.path.join(d, n)
+    return None
+
+
 def load_confirmed_runtime_deps(path):
     """加载**已确认**的运行实证依赖，供执行期做前置判定。
 
@@ -247,6 +310,44 @@ def load_confirmed_runtime_deps(path):
         sys.stderr.write("WARN: 运行实证依赖读取失败，本次不做前置判定：%s\n" % exc)
         return []
     return precondition_scan.confirmed_only(doc.get("dependencies") or [])
+
+
+def ensure_runtime_dep_contracts(deps, out_dir, kb=None, near=None):
+    """执行前确认已确认依赖的目标契约可用，并落盘清单。
+
+    confirmed 依赖的 target_action 没有契约，Agent 构造前置请求时只能靠猜。
+    解析顺序：① 主契约同级目录（"契约集放一起"是推荐用法，本地命中不查库）
+    → ② 知识库按 action 定位。取不到的进 missing 点名留痕，不猜、不伪造、不阻断执行。
+    无 confirmed 依赖时不产出任何文件，行为与未接入时完全一致（增量接入）。
+    """
+    if not deps:
+        return None
+    records, seen = [], set()
+    for dep in deps:
+        act = str(dep.get("target_action") or "").strip()
+        if not act or act in seen:
+            continue
+        seen.add(act)
+        local = find_local_dep_contract(act, near)
+        path, origin = (local, "local") if local else (resolve_contract_from_kb(act, kb) or "", "kb")
+        records.append({
+            "target_action": act,
+            "target_name": dep.get("target_name") or "",
+            "subject_action": dep.get("subject_action") or "",
+            "contract_path": path,
+            "origin": origin if path else "",
+        })
+    if not records:
+        return None
+    missing = [r["target_action"] for r in records if not r["contract_path"]]
+    local_n = len([r for r in records if r["origin"] == "local"])
+    out = {"contracts": records, "missing": missing}
+    path = os.path.join(out_dir, "runtime_dep_contracts.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    print("依赖契约清单 -> %s（本地 %d 条 / 知识库 %d 条 / 缺失 %d 条）"
+          % (path, local_n, len(records) - len(missing) - local_n, len(missing)))
+    return out
 
 
 def reset_runtime():
@@ -415,6 +516,8 @@ def main():
         intelligence["dependency_path"]))
 
     profile = args.profile or (exec_cfg.get("execution") or {}).get("profile") or "full"
+    # 默认 sojump 是保守安全默认：让写操作门禁默认生效（写接口须显式声明 test 环境
+    # 或 --adapter rest 才放行）。改成 rest 会削弱 sojump 写保护，勿轻易改。
     adapter_name = args.adapter or exec_cfg.get("adapter") or "sojump"
     if args.plan_only or profile == "plan" or not args.execute:
         print("\n未执行（计划模式，profile=%s）。用例已生成，可直接审阅或人工裁剪后再跑。"
@@ -442,6 +545,11 @@ def main():
     if R.CONFIRMED_PRECONDITION_DEPS:
         print("已加载运行实证依赖 %d 条（将用于前置判定，命中者不计缺陷）"
               % len(R.CONFIRMED_PRECONDITION_DEPS))
+        # 依赖契约就位检查：confirmed 的目标接口若缺契约，先看主契约同级目录，
+        # 再从知识库按 action 取回路径，落盘 runtime_dep_contracts.json；
+        # 取不到的点名留痕，不阻断执行。
+        ensure_runtime_dep_contracts(R.CONFIRMED_PRECONDITION_DEPS,
+                                     args.out_dir, kb=args.kb, near=contract_path)
     interval = policy.get("request_interval_ms") or 0
     print("\n适配器=%s 档位=%s 开始执行 %d 条用例%s..." % (
         adapter_name, profile, len(cases),
@@ -491,6 +599,11 @@ def main():
 
     cleanup_step(exec_cfg, args.out_dir)
     write_regression_artifacts(args.out_dir, doc)
+
+    # 产物回读校验（交付前自检）。放在 report_enhance **之后**：增强会重写 CSV，
+    # 放在它前面校验的是即将被替换的文件，等于校验了一个没人会拿到的产物。
+    if not args.dry_run and os.path.isfile(csv_path):
+        verify_artifacts(args.out_dir, csv_path)
 
     if args.retest:
         rows = []

@@ -28,6 +28,8 @@
 7. **CSV 用 utf-8-sig 逗号分隔**
    字段含逗号/引号/换行时用双引号包裹（内部引号用 `""` 转义），否则 Excel/WPS 打开错位。
    （团队约定：交付数据一律 CSV，不用 TSV。）
+   台账列口径在 `assets/finding_columns.json`；交付前用 `scripts/artifact_readback.py`
+   把编码、表头、列宽、编号、行数回读校验一遍——列错位与 finding 静默丢失都靠它拦。
 
 8. **连接异常重试后仍失败 → ENV**
    不计入业务缺陷。重试次数由 `RETRY_COUNT` 控制（可经执行配置 `execution.retry_network_errors` 覆盖）。

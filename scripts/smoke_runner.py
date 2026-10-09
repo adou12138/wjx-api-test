@@ -66,6 +66,18 @@ except Exception:  # 独立运行兜底：无个人配置时保留冒烟配置�
 import attribution_engine as _attr
 import evidence_bundle as _evid
 
+# 台账列口径与深度流程共用同一来源（api_test_runner），避免"同一份台账两套表头"。
+# 该模块导入会连带加载个人配置，故放在 try 内；失败则回退本地列定义并出声——
+# 静默用一套不同的列，正是本模块要避免的错位。
+try:
+    import api_test_runner as _R
+    SMOKE_FINDING_COLS = list(_R.FINDING_CSV_COLS)
+except Exception as _e:  # noqa: BLE001
+    SMOKE_FINDING_COLS = ["编号", "类型", "严重程度", "状态", "维度", "问题描述", "请求Body",
+                          "预期结果", "实际结果", "置信度", "HTTP状态码", "请求ID", "TraceID",
+                          "证据路径", "归因", "复测状态"]
+    print("⚠️ 台账列口径读取失败（%s: %s），已回退内置默认列" % (type(_e).__name__, _e))
+
 # 产物脱敏开关：默认开启。结果 CSV / 问题台账 / report JSON 都要外发给开发，
 # 明文 sign / token / cookie / password 等于直接泄露凭据，故默认打码
 # （只打码敏感值，保留字段名与结构，开发仍能原样复现）。
@@ -675,10 +687,10 @@ def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed) -> None:
         w.writeheader()
         w.writerows(results)
 
-    # 2) 问题台账 CSV（扩展列，与深度测试智能台账同格式：基础 9 列 + 归因/证据/复测列）
+    # 2) 问题台账 CSV（列口径与深度流程共用 api_test_runner.FINDING_CSV_COLS，
+    #    避免"同一份台账两套表头"——曾经冒烟少写 请求ID/TraceID，两边对不齐)
     p_iss = out / f"smoke_issues_{run_id}.csv"
-    icols = ["编号", "类型", "严重程度", "状态", "维度", "问题描述", "请求Body", "预期结果", "实际结果",
-             "置信度", "HTTP状态码", "证据路径", "归因", "复测状态"]
+    icols = list(SMOKE_FINDING_COLS)
     with open(p_iss, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=icols)
         w.writeheader()
@@ -729,6 +741,9 @@ def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed) -> None:
                 "请求Body": r["请求Body"], "预期结果": expected,
                 "实际结果": f"HTTP {r['HTTP']} · {r['错误信息']}",
                 "置信度": att.get("confidence"), "HTTP状态码": r["HTTP"],
+                # 请求ID/TraceID 冒烟无采集渠道，留空但**列必须在**：
+                # 缺列会让冒烟台账与深度台账表头对不齐，消费方按列位取值就整体错位
+                "请求ID": "", "TraceID": "",
                 "证据路径": ev_path, "归因": f"{cat}:{att.get('reason','')}",
                 "复测状态": "待复测",
             })

@@ -28,17 +28,19 @@
 | 预期结果 | 应表现出的行为；异常用例写明期望命中的错误关键词 |
 | 实际结果 | 实际观测；FAIL 且触发最小化时，末尾自动附「最小复现请求：…」 |
 
-### 证据链 7 列（此前只有列头、值恒空）
+### 证据链 7 列
 
 | 列 | 写入者 | 说明 |
 |---|---|---|
 | 置信度 | `add_finding(confidence=)` | 默认 `0.8`；<0.8 表示推断项，只进探索性测试/待确认清单 |
-| HTTP状态码 | `add_finding(http_code=)` | 响应状态码；无请求（如覆盖率缺口）留空。5xx 一律记问题 |
-| 请求ID | `add_finding(request_id=)` | 服务端返回的 request id，用于向开发取证 |
-| TraceID | `add_finding(trace_id=)` | 链路追踪 id（有则记，便于跨服务定界） |
-| 证据路径 | `add_finding(evidence_path=)` | 脱敏证据包/原始响应的落盘路径 |
+| HTTP状态码 | **运行时自动**（`run()` / `assert_validation()`） | 本次请求的响应状态码，由 `call()` 返回值经`auto_evidence()` 填入；无真实请求时（如覆盖率缺口）留空，`-1` 表示连接失败 |
+| 请求ID | **运行时自动**（`auto_evidence()`） | 从响应头按常见候选名（`X-Request-Id` / `X-Correlation-Id` 等，大小写不敏感）提取；取不到留空 |
+| TraceID | **运行时自动**（`auto_evidence()`） | 从响应头按 `X-Trace-Id` / `X-B3-TraceId` 等提取；取不到留空 |
+| 证据路径 | `add_finding(evidence_path=)` / `evidence_bundle` | 脱敏证据包/原始响应的落盘路径 |
 | 归因 | `attribution_engine` | `ENV` / `RATE_LIMIT` / `CONSISTENCY_PENDING` / `NEEDS_CONFIRMATION` / `DEFECT` / `PRECONDITION_UNMET`；**类别清单以 `references/attribution_rules.md` 为准**。ENV 与 RATE_LIMIT 不计入缺陷；`PRECONDITION_UNMET`（前置条件未满足，需已确认依赖才生效）既不算失败也不算通过，但同样**不进缺陷台账** |
 | 复测状态 | `add_finding(retest_status=)` | 默认「待复测」；复测后回写「已修复(附证据)/仍存在/新发生」 |
+
+> 采集三列（HTTP状态码 / 请求ID / TraceID）的数据源本来就在手上——状态码是 `call()` 返回值的第一项，响应头由 `_record_response_headers` 旁路缓存着。`run()` 与 `assert_validation()` 用局部包装自动把它们交给台账，避免在每个失败分支手工传参（必然漏，而漏的表现是"列在、值全空"这种不报错的静默缺失）。交付前由 `scripts/artifact_readback.py` 回读核对这批列是否真有内容。
 
 ## 枚举取值
 - **类型**：缺陷 / 待确认 / 已确认非问题 / 符合预期(安全拦截) / 环境风险(ENV) / 需求确认 / 文案优化 / 建议项 / 样式问题
