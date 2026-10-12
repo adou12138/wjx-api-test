@@ -539,6 +539,7 @@ def main():
     cases = cap_cases(cases, policy)
     cases = order_cases_for_exec(cases)
     R.COVERAGE_PLAN = doc.get("coverage_plan") or []
+    R.CHECK_KEY_MISSING = doc.get("check_key") or {}
     # 【前置判定】注入已人工确认的运行实证依赖。文件不存在或全为候选时列表为空，
     # 此时不做任何前置判定，行为与接入前完全一致（增量接入）。
     R.CONFIRMED_PRECONDITION_DEPS = load_confirmed_runtime_deps(args.runtime_deps)
@@ -568,6 +569,7 @@ def main():
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     print("结果统计：%s" % counts)
     R.coverage_gate()
+    R.check_key_gate()
     case_runner.write_reports(os.path.join(args.out_dir, args.out_prefix))
 
     # 【运行实证依赖发现】执行报告是唯一能看到"真实失败文案"的地方，就地筛一遍：

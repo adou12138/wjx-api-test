@@ -1247,6 +1247,8 @@ def main():
 
     # 关键：把自动生成的覆盖计划装进门禁，让反静默缺漏默认生效
     R.COVERAGE_PLAN = doc.get("coverage_plan") or []
+    # 约束对账结果（生成期算出，执行期出声）
+    R.CHECK_KEY_MISSING = doc.get("check_key") or {}
 
     print("=" * 70)
     print("声明式用例执行 | action=%s | 接口=%s | 用例=%d" % (doc.get("action"), doc.get("name"), len(cases)))
@@ -1268,6 +1270,7 @@ def main():
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     print(counts)
     R.coverage_gate()
+    R.check_key_gate()
     if R.shallow_passes:
         print("\n⚠️ 浅用例 %d 条：仅断言 result=true、未做深度断言。" % R.shallow_passes)
     write_reports(args.out_prefix)

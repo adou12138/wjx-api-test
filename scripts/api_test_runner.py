@@ -128,6 +128,10 @@ CONFIRMED_PRECONDITION_DEPS = []
 # 用户在 main() 里声明本次要覆盖的维度编号（如 ["A","B","C","AA","AB","AC","H"]）。
 # 为空则不强制，仅提示建议；设 WJX_STRICT_COVERAGE=1 时声明维度缺用例即 exit(2)。
 COVERAGE_PLAN = []
+
+# 约束对账结果：由 case_runner / flow 从 generated_cases.json 的 check_key 字段装载。
+# 维度门禁回答「维度跑没跑」，它回答「契约声明的字段约束有没有用例兑现」——两者互补。
+CHECK_KEY_MISSING = {}
 # 示例（接入你的接口时取消注释并改为本次适用的维度编号；覆盖维度对照见 applicability_matrix.md / framework.md）：
 # COVERAGE_PLAN = ["A", "C", "D", "AA", "AB", "AC", "H"]
 shallow_passes = 0      # 仅校验 result=true、未做深度断言的"浅用例"计数（报告看似完整的主因）
@@ -1840,6 +1844,34 @@ def coverage_gate():
             sys.exit(2)
     else:
         print("✅ 声明维度均已覆盖，无静默缺漏。")
+
+
+def check_key_gate():
+    """约束对账门禁：契约声明的字段约束，是否每条都有用例去兑现。
+
+    与 coverage_gate 互补：维度门禁只能回答「边界维度有没有用例跑过」，回答不了
+    「契约声明了 activity 的类型，有没有一条 wrong_type:activity 用例」。生成器漏掉
+    某字段的某个约束时，该维度仍被其他用例覆盖，维度门禁看不出来——这是静默缺口。
+
+    只出声、不进缺陷台账：约束缺的是「测试设计完整性」，不是接口缺陷。实测单接口
+    可达上百条，进台账会淹没真缺陷。完整清单留在产物 check_key 字段里供审计。
+    """
+    rec = CHECK_KEY_MISSING or {}
+    if not rec:
+        return
+    req = rec.get("required_keys") or []
+    miss = rec.get("missing") or []
+    print("\n[约束对账] 契约声明 %d 条字段约束，已兑现 %d 条，缺口 %d 条"
+          % (len(req), len(req) - len(rec.get("missing_keys") or []),
+             len(rec.get("missing_keys") or [])))
+    if not miss:
+        print("✅ 契约声明的字段约束均有用例兑现。")
+        return
+    print("⚠️ 以下约束契约已声明、但无任何用例兑现（静默缺失，维度门禁看不出来）：")
+    for m in miss[:10]:
+        print("    - %s  %s" % (m.get("key"), m.get("reason") or ""))
+    if len(miss) > 10:
+        print("    ... 另 %d 条，完整清单见产物 check_key.missing" % (len(miss) - 10))
 
 
 # ===================== 用例集（把下面的 EXAMPLE 替换为你的真实用例） =====================

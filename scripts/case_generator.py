@@ -26,6 +26,7 @@ from companion_scan import resolve as resolve_companion  # noqa: E402
 import dim_generators                                    # noqa: E402
 import llm_fact_cases                                    # noqa: E402
 import pattern_engine                               # noqa: E402
+import check_key                                    # noqa: E402
 
 BIG_CAP = 5000
 TYPE_BAD = {
@@ -795,6 +796,11 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
             seen[cid] = 0
         uniq.append(c)
 
+    # 用例身份证：全量用例（含语义/人工）纳入编号体系后，再与契约约束对账。
+    # 用派生而非逐点手改：9 个生成器、84 个 _mk 调用点，只有集中派生才不会漏。
+    check_key.assign_keys(uniq)
+    ck_rec = check_key.reconcile(uniq, contract)
+
     return {
         "action": contract.get("action"),
         "name": contract.get("name"),
@@ -819,6 +825,7 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
         "companion": comp,
         "tier_stats": tier_stats(uniq),
         "payload_skipped": payload_skipped,
+        "check_key": ck_rec,
         "llm_verify_report": contract.get("llm_verify_report"),
         "cases": uniq,
     }
@@ -899,6 +906,8 @@ def main():
                   % {k: ["%s(%s)" % (x["action"], x["title"]) for x in v] for k, v in cand.items() if v})
         print("用例数=%d  按维度=" % len(doc["cases"]), summary(doc))
         _print_tier(doc)
+        if doc.get("check_key"):
+            check_key.report(doc["check_key"])
         return
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=2)
@@ -908,6 +917,8 @@ def main():
                                  ", ".join("%s(%d)" % (m["id"], m["cases"]) for m in doc["matched_patterns"])))
     print("按维度：%s" % summary(doc))
     _print_tier(doc)
+    if doc.get("check_key"):
+        check_key.report(doc["check_key"])
     if not doc["read_action"]:
         print("提示：无配套读接口（来源=%s），往返验证按「写入后回读一致性」退化执行，"
               "越权矩阵的读面以 TODO 占位点名" % comp.get("source"))
