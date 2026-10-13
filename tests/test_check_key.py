@@ -61,13 +61,19 @@ class TestRequiredChecks(unittest.TestCase):
             _contract([{"name": "html_content", "max_len": 200000}]))
         self.assertNotIn("above_maximum:html_content", {r["key"] for r in rec})
 
-    def test_min_len_excluded_no_generator_promise(self):
-        """生成器不产出 min_len 用例，below_minimum 不进分母（无承诺不对账）。
+    def test_min_len_ge2_below_minimum_in_denominator(self):
+        """min_len >= 2：生成器承诺 B-LEN-UNDER，below_minimum 进分母（v4.24.0 起）。
 
-        否则契约一旦写出"最短N"，门禁会报永远无法兑现的假缺口。
-        生成器补上 min_len 用例后，应把 below_minimum 加回分母。
+        此前生成器不产出 min_len 用例、below_minimum 不进分母；v4.24.0 补上
+        "低于下限"用例后，按"分母 = 生成器承诺范围"把 below_minimum 加回分母。
         """
         rec = check_key.required_checks(_contract([{"name": "a", "min_len": 5}]))
+        self.assertIn("below_minimum:a", {r["key"] for r in rec})
+
+    def test_min_len_eq1_no_denominator(self):
+        """min_len == 1：低于值即空串，与可选空值/必填缺失语义重叠，生成器不构造
+        B-LEN-UNDER，分母也不声明 below_minimum——无承诺就不对账，避免假缺口。"""
+        rec = check_key.required_checks(_contract([{"name": "a", "min_len": 1}]))
         self.assertNotIn("below_minimum:a", {r["key"] for r in rec})
 
     def test_reason_carries_contract_value(self):

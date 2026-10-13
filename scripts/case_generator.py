@@ -288,6 +288,31 @@ def gen_field_mutations(contract, base, action):
                                 "边界+1 用例，此条只探大体积合法内容是否被正常接受。"
                                 "5xx 或返回成功但回读内容被截断即缺陷；超时先归 ENV/网络"))
 
+        # 3b) 长度下边界（min_len）：低于下限应被拒绝、恰好等于下限应成功。
+        #     与 max_len 同样刻意用 ASCII 业务形态，避免中文按字符/按字节的口径差异污染边界判定。
+        #     仅在下限 >= 2 时构造"低于下限"用例：ml-1 >= 1 才是明确的"非空但过短"；
+        #     ml == 1 时低于值即空串，与可选空值/必填缺失语义重叠，交给 over_validation/missing 覆盖。
+        #     "恰好等于下限应成功"仅在字段无枚举时构造——有枚举时业务形态字符串不在枚举内，
+        #     会被后端以枚举理由拒绝，那不是边界缺陷，构造了就是假缺陷（分母侧同理，below_minimum
+        #     只对 min_len>=2 声明，与这里的 B-LEN-UNDER 严格对齐）。
+        if f.get("min_len"):
+            ml = int(f["min_len"])
+            if ml >= 2:
+                p = dict(base)
+                p[name] = _long_value(f, ml - 1)
+                out.append(_mk("B-LEN-UNDER-%s" % name, "长度低于下限：%s %d-1 字符（应被拒绝）" % (name, ml),
+                               "B", "参数校验-边界", p,
+                               {"success": False, "err_keywords": [name]},
+                               action=action, priority="P0", source="generator:length_under",
+                               note="低于声明的最小长度应被拒绝；ASCII 业务形态填充，避免字符/字节口径差异"))
+            if not f.get("enum"):
+                p2 = dict(base)
+                p2[name] = _long_value(f, ml)
+                out.append(_mk("B-LEN-MIN-%s" % name, "长度等于下限：%s 恰好 %d 字符（应成功）" % (name, ml),
+                               "B", "参数校验-边界", p2, {"success": True},
+                               action=action, priority="P1", source="generator:length_min",
+                               note="恰好等于最小长度应被接受（off-by-one）；后端按字节校验会在此暴露口径差异，记待确认"))
+
         # 4) 内容类字段的安全注入用例已升级为清单驱动：见 gen_security_payload_cases()
         #    （assets/security_payloads.json，按语义标签选载荷），此处不再内联生成。
     return out

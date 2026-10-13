@@ -49,6 +49,8 @@ CONSTRAINT_TYPES = (
 # 机械用例 ID 前缀 → 约束类型。
 # 长前缀必须排在短前缀之前：否则 "B-LEN-OVER-x" 可能被更短的通用规则先截走。
 _MECH_PREFIXES = (
+    ("B-LEN-UNDER-", "below_minimum"),
+    ("B-LEN-MIN-", "at_minimum"),
     ("B-LEN-OVER-", "above_maximum"),
     ("B-LEN-EDGE-", "at_maximum"),
     ("B-MISS-", "missing_required"),
@@ -140,9 +142,13 @@ def required_checks(contract):
         if f.get("max_len") and f["max_len"] <= _active_max_len_cap():
             out.append(_chk("above_maximum", name,
                             "超出长度上限 %s 应被拒绝" % f["max_len"]))
-        # min_len 不进分母：生成器目前不产出下边界用例（无承诺就不对账）。
-        # 若声明了它，契约一旦写出"最短N"就会报永远无法兑现的假缺口；
-        # 生成器补上 min_len 用例后，再把 below_minimum 加回分母。
+        # min_len 下边界：仅对 min_len >= 2 声明 below_minimum。生成器同样只在
+        # min_len >= 2 时构造"低于下限"用例（ml-1 >= 1 才是明确的非空过短值）；
+        # ml == 1 时低于值即空串，与可选空值/必填缺失语义重叠，交给 over_validation /
+        # missing_required 覆盖——分母与生成器承诺严格对齐，避免造出永不兑现的假缺口。
+        if f.get("min_len") and int(f["min_len"]) >= 2:
+            out.append(_chk("below_minimum", name,
+                            "低于长度下限 %s 应被拒绝" % f["min_len"]))
         if f.get("enum"):
             out.append(_chk("invalid_enum", name,
                             "枚举越界值应被拒绝（契约声明 %d 个取值）"
