@@ -31,9 +31,14 @@
   4. --confirm 人工确认候选（或 --confirm-all），转正式
   5. --markdown 把已确认的依赖渲染成可写入知识库文档的「运行实证」节
 
+捷径（v4.28.0）：--auto 规则直提——当失败文案里「明确前置话术 + 邻近 1xxxxxx action 号」
+同时出现时，免 LLM 直接产候选（action 号原样在文案里、非猜；仍是候选，须 --confirm）。
+话术命中但邻近无 action 号的仍走 --prep/模型或进 unknowns，不猜。
+
 用法：
   python precondition_scan.py --prep --report <prefix>_report_full.json
   python precondition_scan.py --merge facts.json --report <prefix>_report_full.json
+  python precondition_scan.py --auto --report <prefix>_report_full.json --store runtime_dependencies.json
   python precondition_scan.py --confirm-all --store runtime_dependencies.json
   python precondition_scan.py --markdown --store runtime_dependencies.json
 """
@@ -64,6 +69,11 @@ _PRECONDITION_HINTS = (
 
 # 唯一可外部消费的 action 形态：7 位数字（问卷星 action 编号）。
 _ACTION_RE = re.compile(r"(?<!\d)(1\d{6})(?!\d)")
+
+# 规则直提（v4.28.0）：仅"明确前置话术 + 邻近 1xxxxxx action 号"才直提，避免把
+# 时间戳/ID 误当 action。只作 candidate，仍须人工 --confirm；话术命中但邻近无号者留给 --prep/unknowns。
+_AUTO_DEP_RE = re.compile(
+    r"(?:请先调用|需先调用|需要先调用|必须先调用|要先调用|先行调用|请先|需先|必须先|前置条件)[^\n]{0,16}?(1\d{6})")
 
 # 该条响应里可供引用的原文上限，避免把整份报告塞进提示词。
 MAX_RESPONSE_CHARS = 1200
@@ -146,6 +156,34 @@ def harvest(report: dict, subject_name: str = "") -> list:
             "response_excerpt": text[:MAX_RESPONSE_CHARS],
         })
     return out
+
+
+def auto_facts(candidates: list) -> dict:
+    """规则直提（v4.28.0）：从候选失败直接产事实，免 LLM——仅限"明确前置话术 + 邻近 action 号"。
+
+    sound 边界：action 号必须**原样出现在响应文案里且紧邻前置话术**（不是猜的），
+    evidence 取该号上下文原文连续子串；产出仍是 candidate，须人工 --confirm 才生效。
+    每条候选只提第一个命中；自引用跳过；话术命中但邻近无 action 号的不走本条
+    （留给 --prep 让模型看，或进 unknowns），不猜。
+    """
+    deps = []
+    for c in candidates:
+        text = c.get("response_excerpt") or ""
+        m = _AUTO_DEP_RE.search(text)
+        if not m:
+            continue
+        target = m.group(1)
+        if c.get("action") and target == str(c.get("action")):
+            continue
+        start = max(0, m.start() - 12)
+        end = min(len(text), m.end() + 12)
+        deps.append({
+            "case_no": c.get("case_no") or "",
+            "target_action": target,
+            "target_hint": "auto",
+            "evidence": text[start:end],
+        })
+    return {"dependencies": deps}
 
 
 # ------------------------------------------------------------------- prep
@@ -393,6 +431,8 @@ def main():
     ap.add_argument("--store", default="runtime_dependencies.json", help="依赖记录落盘路径")
     ap.add_argument("--known-actions", help="已知 action 全集，逗号分隔；给出后才做存在性校验")
     ap.add_argument("--manual", help="人工登记的依赖 JSON（与 merge 同格式）")
+    ap.add_argument("--auto", action="store_true",
+                    help="规则直提：话术+邻近 action 号明确时免 LLM 直接产候选（仍需 --confirm 生效）")
     ap.add_argument("--confirm", help="确认指定候选（case_no 或 target_action），逗号分隔")
     ap.add_argument("--confirm-all", action="store_true", help="确认全部候选")
     ap.add_argument("--markdown", action="store_true", help="渲染「运行实证」节")
@@ -433,12 +473,20 @@ def main():
         records = dedup_merge(records, mclean)
         print("人工登记并入 %d 条" % len(mclean))
 
+    if args.auto:
+        rows, clean = verify(auto_facts(candidates), candidates, known)
+        for row in rows:
+            print("  [%s] %s %s" % (row[2], row[0], row[3]))
+        records = dedup_merge(records, clean)
+        print("规则直提通过 %d 条，累计记录 %d 条（仍是候选，需 --confirm 才生效）"
+              % (len(clean), len(records)))
+
     if args.confirm or args.confirm_all:
         keys = (args.confirm or "").split(",")
         n = confirm(records, keys=keys, all_flag=args.confirm_all)
         print("已确认 %d 条候选依赖（确认后才会影响归因与生成）" % n)
 
-    if args.store and (args.merge or args.manual or args.confirm or args.confirm_all):
+    if args.store and (args.merge or args.manual or args.auto or args.confirm or args.confirm_all):
         _save(args.store, {
             "source": "runtime",
             "generated_at": args.date or "",
@@ -454,7 +502,7 @@ def main():
         print(render_markdown(confirmed_only(records), date=args.date or ""), end="")
         return
 
-    if not (args.merge or args.manual or args.confirm or args.confirm_all or args.markdown):
+    if not (args.merge or args.manual or args.auto or args.confirm or args.confirm_all or args.markdown):
         print("疑似前置失败 %d 条：" % len(candidates))
         for c in candidates:
             print("  [%s] %s | 命中 %s | %s" % (c["case_no"], c["name"][:30],
