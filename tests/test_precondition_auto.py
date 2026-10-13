@@ -50,6 +50,21 @@ class TestAutoFacts(unittest.TestCase):
         self.assertEqual(clean[0]["target_action"], "1000102")
         self.assertNotEqual(clean[0].get("status"), "confirmed", "直提产出仍是候选，不是已确认")
 
+    def test_eight_digit_number_not_extracted(self):
+        """8 位数字（时间戳/长 ID）不应截出错误的 7 位 action——v4.28.0 审查修复。
+
+        无数字边界时 `1\d{6}` 会从 10001028 截出 1000102 且骗过 verify 的 fullmatch，
+        形成错误候选依赖。
+        """
+        cands = [{"case_no": "T01", "action": "1000108",
+                  "response_excerpt": "请先调用 10001028 完成（8 位，不是合法 action）"}]
+        self.assertEqual(P.auto_facts(cands)["dependencies"], [], "8 位数字不应截出 7 位假 action")
+
+    def test_seven_digit_still_extracted(self):
+        cands = [{"case_no": "T01", "action": "1000108",
+                  "response_excerpt": "请先调用 1000102 修改状态"}]
+        self.assertEqual(len(P.auto_facts(cands)["dependencies"]), 1, "边界修复不影响正常 7 位号")
+
 
 if __name__ == "__main__":
     unittest.main()

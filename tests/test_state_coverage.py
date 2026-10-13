@@ -66,6 +66,18 @@ class TestStateCoverage(unittest.TestCase):
         self.assertLessEqual(len(e04), pattern_engine.STATE_MAX_FIELDS)
         self.assertLessEqual(len(e02), pattern_engine.STATE_MAX_FIELDS)
 
+    def test_response_only_status_no_e04(self):
+        """响应独有的状态字段设不进去，不应生成 E04（拿它当 target 是空操作）——v4.26.0 审查修复。"""
+        contract = {"request_fields": [{"name": "title", "type": "string", "semantics": ["name"]}],
+                    "response_fields": [_sf("audit", [(0, "a"), (1, "b")])]}
+        cases = pattern_engine.s3_gen(contract, _ctx())
+        ids = [str(c["id"]) for c in cases]
+        self.assertEqual([i for i in ids if i.startswith("E04")], [],
+                         "响应独有状态字段不可设置，不应生成 E04")
+        todo = [c for c in cases if c["id"] == "TODO-E-状态枚举"]
+        self.assertEqual(len(todo), 1)
+        self.assertIn("仅在响应侧", todo[0]["name"], "TODO 原因应说清'仅响应侧设不进去'")
+
 
 if __name__ == "__main__":
     unittest.main()

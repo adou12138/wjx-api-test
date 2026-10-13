@@ -71,9 +71,10 @@ _PRECONDITION_HINTS = (
 _ACTION_RE = re.compile(r"(?<!\d)(1\d{6})(?!\d)")
 
 # 规则直提（v4.28.0）：仅"明确前置话术 + 邻近 1xxxxxx action 号"才直提，避免把
-# 时间戳/ID 误当 action。只作 candidate，仍须人工 --confirm；话术命中但邻近无号者留给 --prep/unknowns。
+# 时间戳/ID 误当 action。捕获组带前后数字边界（同 _ACTION_RE）——否则 8 位数字会截出
+# 错误的 7 位号且能骗过 verify 的 fullmatch。只作 candidate，仍须人工 --confirm。
 _AUTO_DEP_RE = re.compile(
-    r"(?:请先调用|需先调用|需要先调用|必须先调用|要先调用|先行调用|请先|需先|必须先|前置条件)[^\n]{0,16}?(1\d{6})")
+    r"(?:请先调用|需先调用|需要先调用|必须先调用|要先调用|先行调用|请先|需先|必须先|前置条件)[^\n]{0,16}?((?<!\d)1\d{6}(?!\d))")
 
 # 该条响应里可供引用的原文上限，避免把整份报告塞进提示词。
 MAX_RESPONSE_CHARS = 1200

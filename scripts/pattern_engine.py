@@ -438,14 +438,25 @@ def s3_gen(c, ctx):
 
     # E04：把转换矩阵**跑成事实表**（逐个目标状态提交 + 回读），人不从零设计。
     # 合法性仍不猜（那是 E03 的人工活），只硬判"接受但回读值被改写"这一确定缺陷。
-    # v4.26.0：覆盖**所有**状态字段（而非只第一个），每个字段用它**自己**声明的枚举当目标值
-    #（修掉旧版"请求字段名配响应枚举"的错配），受 STATE_MAX_FIELDS 上限约束。
+    # v4.26.0：覆盖**所有可设置（请求侧）状态字段**（而非只第一个），受 STATE_MAX_FIELDS 约束。
+    # 每个 E04 用它**自己请求字段**的枚举当目标值；请求字段没写枚举时才借用响应侧枚举值——
+    # 提交的字段始终是请求侧可设置的（响应独有字段设不进去，拿它当 target 是空操作，不出用例）。
+    req_status = _status_fields(c, "request_fields")
+    resp_status = _status_fields(c, "response_fields")
+    borrowed = []
+    for f in resp_status:
+        v = [x for x, _ in (f.get("enum") or [])]
+        if v:
+            borrowed = v
+            break
     st_candidates = []
-    for f in _status_fields(c, "request_fields") + _status_fields(c, "response_fields"):
-        vals = [v for v, _ in (f.get("enum") or [])]
+    for f in req_status:
+        vals = [x for x, _ in (f.get("enum") or [])]
+        if not vals and borrowed:
+            vals = borrowed
         if vals:
             st_candidates.append((f, vals))
-    any_status = bool(_status_fields(c, "request_fields") or _status_fields(c, "response_fields"))
+    any_status = bool(req_status or resp_status)
     st_candidates = st_candidates[:STATE_MAX_FIELDS]
     if st_candidates:
         for idx, (st_field, st_vals) in enumerate(st_candidates):
@@ -462,15 +473,18 @@ def s3_gen(c, ctx):
                                 "合法性按业务状态图人工核对（见 E03）。"
                                 "硬判的只有「接受但回读值被改写」——确定的状态参数失效缺陷"))
     elif any_status:
-        # 有状态字段但契约没给取值枚举 → 矩阵无从构造。点名待补，不静默当"已覆盖 E"。
-        name = (_status_fields(c, "request_fields") or _status_fields(c, "response_fields"))[0]["name"]
+        # 有状态字段但构造不出矩阵：请求侧状态字段没写枚举，或状态字段只在响应侧（设不进去）。
+        # 点名待补，不静默当"已覆盖 E"。
+        if req_status:
+            name, why = req_status[0]["name"], "未声明取值枚举"
+        else:
+            name, why = resp_status[0]["name"], "仅在响应侧、无法通过请求设置"
         out.append(_mk("TODO-E-状态枚举",
-                       "E 维度：状态字段 %s 未声明取值枚举，转换矩阵需人工补充" % name,
+                       "E 维度：状态字段 %s %s，转换矩阵需人工补充" % (name, why),
                        "E", "待补充", dict(ctx["base"]), {"success": False},
                        enabled=False, needs="manual", priority="P1", source="pattern:S3",
-                       note="契约里有状态字段但没写取值枚举（enum），自动生成器拿不到目标状态清单，"
-                            "无法逐个提交跑转换矩阵。补上枚举（或在备注里写明取值如 0/1/2/3）后重跑，"
-                            "E04 会自动生成"))
+                       note="契约里有状态字段但构造不出转换矩阵（请求侧没写取值枚举，或字段只在响应侧设不进去）。"
+                            "补上请求侧枚举（或在备注里写明取值如 0/1/2/3）后重跑，E04 会自动生成"))
     return out
 
 
