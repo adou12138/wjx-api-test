@@ -51,8 +51,15 @@ environment.type == "test"      且     environment.write_enabled == true
 | `smoke` | 仅 `priority == "P0"` 且 `enabled != false` | 快速判活、改完先跑一遍 |
 | `full` | 全部 `enabled != false` 的用例（默认） | 常规深度测试 |
 | `exploratory` | 全部用例（含探索性/低置信度） | 探索期、追求发现率 |
+| `discovery` | 全部用例（同 exploratory）**且生成期放宽限额** | 尽量多发现问题 |
 
-档位来源优先级：命令行 `--profile` > 执行配置 `execution.profile` > `full`。
+档位来源优先级：命令行 `--profile` > 执行配置 `execution.profile` > 环境变量 `WJX_PROFILE` > `full`。
+
+`discovery` 与其余档位的区别不在"筛哪些用例"，而在**生成期**：它在用例生成**之前**
+激活 `scripts/discovery_profile.py`，把探测广度的限额整体放宽（超长用例上限、
+安全载荷每字段每类条数、字段族配额、AF 业务场景条数）。档位必须在生成前解析，
+晚于生成再设置等于没设。放宽的只是**探测广度**，断言口径与覆盖率门禁不变；
+默认档（conservative）的限额与接入前逐项一致，不传档位时探测广度零变化（增量接入）。
 
 ## 6. 覆盖率门禁（反静默缺漏）
 

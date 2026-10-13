@@ -37,6 +37,7 @@ import case_generator  # noqa: E402
 import case_runner     # noqa: E402
 import api_test_runner as R  # noqa: E402
 import report_enhance  # noqa: E402
+import discovery_profile  # noqa: E402
 from asset_registry import register  # noqa: E402
 from contract_model import load_contract_model  # noqa: E402
 from relationship_inference import infer_relations  # noqa: E402
@@ -91,6 +92,10 @@ PROFILES = {
     "smoke": lambda c: str(c.get("priority")) == "P0" and bool(c.get("enabled", True)),
     "full": lambda c: bool(c.get("enabled", True)),
     "exploratory": lambda c: True,  # 含探索性/低置信度用例
+    # 发现档：全选（与 exploratory 同），区别在**生成期**——本档会先激活
+    # discovery_profile，放宽超长上限/载荷条数/字段族配额/AF 条数。选择规则
+    # 只是"全选"，真正的"多探"发生在限额上，见 discovery_profile。
+    "discovery": lambda c: True,
 }
 
 
@@ -442,8 +447,9 @@ def main():
     ap.add_argument("--execute", action="store_true", help="真实执行（默认只生成用例）")
     ap.add_argument("--plan-only", action="store_true", help="只生成智能计划和用例，不进入执行阶段")
     ap.add_argument("--dry-run", action="store_true", help="列出执行计划但不发起请求")
-    ap.add_argument("--profile", choices=("plan", "smoke", "full", "exploratory"), default=None,
-                    help="执行档位；省略时取 --config 的 execution.profile，再回退 full")
+    ap.add_argument("--profile", choices=("plan", "smoke", "full", "exploratory", "discovery"), default=None,
+                    help="执行档位；省略时取 --config 的 execution.profile → WJX_PROFILE，再回退 full。"
+                         "discovery=发现档（生成期放宽探测广度：超长上限/载荷条数/字段族配额/AF 条数）")
     ap.add_argument("--config", help="可选执行配置 JSON")
     ap.add_argument("--adapter", choices=("rest", "sojump", "graphql", "grpc"), default=None,
                     help="适配器类型；省略时取 --config 的 adapter，再回退 sojump")
@@ -458,6 +464,16 @@ def main():
     args = ap.parse_args()
 
     exec_cfg = load_exec_config(args.config)
+    # 档位必须在**生成之前**解析并激活：限额（超长上限/载荷条数/字段族配额）是
+    # 生成期读取的，晚于生成再设置就等于没设。优先级：命令行 > 执行配置 > 环境变量 > full。
+    profile = (args.profile or (exec_cfg.get("execution") or {}).get("profile")
+               or discovery_profile.env_profile() or "full")
+    discovery_profile.activate(profile if profile in ("conservative", "discovery") else "")
+    if discovery_profile.is_discovery():
+        print("发现档（discovery）：探测广度已放宽 → %s；断言口径与门禁不变（增量接入）。"
+              % {k: discovery_profile.get(k) for k in (
+                  "big_cap", "payload_per_field_per_category", "null_state_fields",
+                  "url_fields", "ui_proxy_fields", "af_max_cases", "overlong_probe")})
     inputs = resolve_inputs(exec_cfg, args.contract)
 
     if not (args.contract or args.action or inputs["contract"]):
@@ -515,7 +531,7 @@ def main():
         len(intelligence["plan"].get("dependency_unknowns") or []),
         intelligence["dependency_path"]))
 
-    profile = args.profile or (exec_cfg.get("execution") or {}).get("profile") or "full"
+    # profile 已在生成之前解析并激活（见上），此处直接复用，不再重复解析。
     # 默认 sojump 是保守安全默认：让写操作门禁默认生效（写接口须显式声明 test 环境
     # 或 --adapter rest 才放行）。改成 rest 会削弱 sojump 写保护，勿轻易改。
     adapter_name = args.adapter or exec_cfg.get("adapter") or "sojump"

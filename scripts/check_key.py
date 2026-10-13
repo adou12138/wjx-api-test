@@ -33,6 +33,8 @@
 import re
 import sys
 
+import discovery_profile
+
 CONSTRAINT_TYPES = (
     "missing_required",   # 必填缺失 → 应被拒绝
     "wrong_type",         # 类型错误 → 应被拒绝
@@ -69,9 +71,17 @@ _BAD_TYPE_TOKENS = frozenset((
 # 生成器只对 max_len 不超过该上限的字段构造长度用例（超长 payload 会拖慢请求、
 # 被网关拒收，属有意跳过——实测 1000107/1000108 的 html_content max_len=200000）。
 # 分母必须与这条生成器承诺对齐：超限字段声明 above_maximum 会产生永远无法
-# 兑现的假缺口，且恰好落在高频接口上每轮必刷。与 case_generator.BIG_CAP
-# 的一致性由单测守住。
-_MAX_LEN_CAP = 5000
+# 兑现的假缺口，且恰好落在高频接口上每轮必刷。
+#
+# 该上限由 discovery_profile 集中管理（发现档会放宽到数万）。这里保留常量是给
+# 单测锁定"默认档一致"这条不变量；真正的对账走 _active_max_len_cap()，
+# 取**当前生效档位**的值，从而在 discovery 下分母与生成器承诺仍然同步放宽。
+_MAX_LEN_CAP = discovery_profile.DEFAULTS["big_cap"]
+
+
+def _active_max_len_cap():
+    """当前生效档位的超长上限（含 discovery 放宽）。"""
+    return discovery_profile.get("big_cap")
 
 def _declares_typed(ftype):
     """契约是否声明了「生成器能构造非法值」的类型（决定进不进 wrong_type 分母）。
@@ -127,7 +137,7 @@ def required_checks(contract):
             out.append(_chk("wrong_type", name,
                             "类型错误应被拒绝（契约声明类型 %s）"
                             % str(f.get("type")).strip()))
-        if f.get("max_len") and f["max_len"] <= _MAX_LEN_CAP:
+        if f.get("max_len") and f["max_len"] <= _active_max_len_cap():
             out.append(_chk("above_maximum", name,
                             "超出长度上限 %s 应被拒绝" % f["max_len"]))
         # min_len 不进分母：生成器目前不产出下边界用例（无承诺就不对账）。

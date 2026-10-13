@@ -1,8 +1,8 @@
 ---
 name: "wjx-api-test"
-version: "4.22.0"
+version: "4.23.0"
 agent_created: true
-description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 30 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。AF 业务场景 prompt 自动注入 L5 产品知识（检索失败自动降级为纯契约，不影响主流程）；配套接口解析在同级扫描落空时从 L5 知识库捞候选（只进清单不自动填，供人工 --read-action 指定）。含 30 类维度框架、高频缺陷模式清单、18 条实测陷阱。**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
+description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 30 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。AF 业务场景 prompt 自动注入 L5 产品知识（检索失败自动降级为纯契约，不影响主流程）；配套接口解析在同级扫描落空时从 L5 知识库捞候选（只进清单不自动填，供人工 --read-action 指定）。含 30 类维度框架、高频缺陷模式清单、18 条实测陷阱。`--profile discovery` 发现档把探测广度限额（超长上限 / 安全载荷条数 / 字段族配额 / AF 条数）集中到一处开关，用于"尽量多发现问题"；**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
 ---
 
 # wjx-api-test — 接口测试工作流
@@ -36,6 +36,7 @@ python scripts/flow.py --contract <契约路径> --execute
 python scripts/flow.py --action 1000107 --execute                  # 从知识库按 action 取契约
 python scripts/flow.py --contract <路径>                           # 只生成用例，先审阅再跑
 python scripts/flow.py --contract <路径> --plan-only --profile plan
+python scripts/flow.py --contract <路径> --execute --profile discovery   # 发现档：放宽探测广度，尽量多发现问题
 python scripts/flow.py --contract <路径> --execute --dry-run       # 列计划但不发请求
 python scripts/flow.py --contract <路径> --execute --config <执行配置.json>
 python scripts/flow.py --contract <路径> --execute --retest <回归基线.json>   # 复测四态判定（FIXED/STILL_FAILING/REGRESSED/…）
@@ -186,6 +187,35 @@ python scripts/artifact_readback.py --dir . --json readback.json   # 供门禁�
 - **零产出维度补齐（`dim_generators.py`）**：编码国际化 I（多字节 / emoji 代理对 / 全角 / RTL）、组合交叉 F（多字段同时异常）、请求追踪 V（标识非空且逐次不同）、批量 X（100 条与混入非法项）、导出下载 M（须给出可用下载凭据），以及按**字段特征触发**的业务域专项 N 层级 / Q 角色 / W 附件 / S 分类 / T 账号 / O 通知 / P 分享 / R 报告 / U 导入。三条约束：契约没有对应字段就不生成（造出来的是噪音，还会让"该维度已覆盖"变成假象）；预期说不清的（如顶级节点 parent 为空是否合法）一律 P2 + note 说明"业务允许则记符合预期"，不制造假缺陷；识别不到追踪/下载字段时记观察而非缺陷。
 
 **已知边界**：确实拿不到输入或观测通道的检查（事件推送需推送日志、时区口径需页面时间显示值、批量部分失败需批量接口）标 `needs=manual`，执行时跳过、但**跳过前先记 `COV-*` 缺口进台账**——结果行上的 `SKIPPED` 不进台账，只有台账会被交付与复盘看到，不静默丢弃；生成用例是起点不是终点。模块清单见 `references/auto_generation.md`，降级阶梯与写操作门禁见 `references/intelligence_policy.md`。
+
+### 发现档（discovery：集中放宽探测广度）
+
+规则引擎默认把"探测广度"的限额拧在保守值上，而这些限额散落在生成链的不同阶段
+（超长用例上限、安全载荷每字段每类条数、字段族配额、AF 业务场景条数）——想"多探一点"
+要分别改多处，且容易只改一半。`scripts/discovery_profile.py` 把它们收成一个档位，
+`--profile discovery`（或 `WJX_PROFILE=discovery`）一处生效：
+
+| 限额 | 默认档 | 发现档 | 影响 |
+|---|---|---|---|
+| 超长用例上限 | 5000 | 20000 | 让 max_len 数万级的字段也能构造真正的边界用例 |
+| 安全载荷/字段/类 | 2 | 4 | 每字段每类多测字面 + 变体绕过样本 |
+| 空值四态字段数 | 6 | 12 | 更多字段进入空值 / 缺失探测 |
+| 响应 URL 字段数 | 5 | 10 | 更多 URL 字段做"真能打开"校验 |
+| UI 代理字段数 | 2 | 4 | 更多字段做 UI 代理参数探测 |
+| AF 业务场景条数 | 8 | 20 | 业务语义用例也随"多探"放大 |
+| 大字段单探 | 关 | 开 | 对超限大字段追加一条"大内容健壮性"探针 |
+
+三条硬边界：① **只放宽探测广度，不改断言口径**——放宽后用例的预期方向不变，
+否则假阳性暴涨；② **默认档的限额与接入前完全一致**——不传档位时探测广度零变化
+（增量接入；生成逻辑自身的修复不在此承诺范围内）；③ **放宽产生的用例不享受任何豁免**——
+照常进分层统计、照常计入覆盖率门禁、照常可能被判缺陷。"多探"是增加探测面，
+不是放松判定标准。
+
+**复合类型的类型错误（`wrong_type`）**：契约写 `null / boolean`、`integer / string(int32)`
+时，`type_bad_for` 按类型 token 逐个尝试，选一个**对每个成员都非法**的值注入——
+若注入的值恰好命中某个联合分支被判合法，就会得到"类型错误被接受"的假缺陷，
+因此所有候选都至少被一个成员接受时宁可跳过（返回 None），不冒险造假缺陷。
+生成器补上这部分用例后，约束对账门禁里对应的 `wrong_type` 缺口随之闭合。
 
 ## 用例分层与造值语义化（避免"看起来覆盖很好"）
 
@@ -493,7 +523,7 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 
 **方法论与规范**（`references/`）：`framework.md`（30 维度 + §9 断言/验证矩阵 + §11 数据管理）· `applicability_matrix.md` · `defect_patterns.md` · `doc_review.md` · `smoke_testing.md` · `ui_baseline.md` · `env_config.md` · `issue_format.md` · `case_schema.md` · `auto_generation.md` · `personal_config.md` · `intelligence_policy.md` · `attribution_rules.md` · `adapter_contract.md` · `real_smoke_delivery.md` · `pattern_candidates.md` · `traps.md`
 
-**执行资产**（`scripts/`、`adapters/`）：入口 `flow.py` · `api_test_runner.py`（运行器模板，渲染 `FINDING_CSV_COLS` 台账行）· `smoke_runner.py` · `case_runner.py` · `kb_load_contract.py` · `personal_config.py`；生成链 `contract_parser.py`（ShowDoc/OpenAPI 3.x/Swagger 2.0，JSON+YAML，$ref 与嵌套递归展开）· `contract_model.py` · `field_semantics.py` · `applicability.py` · `pattern_engine.py` · `case_generator.py` · `business_scenarios.py`（AF 业务场景补充生成 + 六项门禁 + prompt 自动注入 L5 产品知识）· `companion_scan.py`（配套接口解析：越权读面 / 真往返 / 列表与计数交叉验证的入口；同级扫描落空时从 L5 知识库捞候选，只进清单不自动填）· `dim_generators.py`（零产出维度补齐：编码国际化 / 组合交叉 / 请求追踪 / 批量 / 导出下载 / 按字段特征触发的业务域专项）· `llm_semantics.py`（语义层接入：大模型读契约产出事实、机械校验后并入，可选且不传时零影响）· `llm_fact_cases.py`（语义层兑付：把并入的事实转成用例，没并入就一条不产）；闭环 `assertion_engine.py` · `attribution_engine.py` · `artifact_readback.py`（产物回读校验：写盘后读回验编码/表头/列宽/编号/行数/证据链列）· `evidence_bundle.py` · `minimizer.py` · `regression.py` · `asset_registry.py` · `relationship_inference.py` · `risk_engine.py` · `plan_builder.py` · `report_enhance.py` · `pattern_feedback.py` · `ui_baseline.py`；适配器 `adapters/base.py` · `adapters/rest.py` · `adapters/sojump.py`（公共参数、鉴权、写操作门禁）· `adapters/graphql.py`（HTTP 200+errors 判失败，反假通过）· `adapters/grpc.py`（懒加载 grpcio，缺依赖实例化即报错）；结构约束 `schemas/contract_model.schema.json` · `schemas/test_plan.schema.json` · `schemas/execution_result.schema.json` · `schemas/finding.schema.json` · `schemas/regression_baseline.schema.json`
+**执行资产**（`scripts/`、`adapters/`）：入口 `flow.py` · `api_test_runner.py`（运行器模板，渲染 `FINDING_CSV_COLS` 台账行）· `smoke_runner.py` · `case_runner.py` · `kb_load_contract.py` · `personal_config.py` · `discovery_profile.py`（发现档：集中管理探测广度限额，一处开关）；生成链 `contract_parser.py`（ShowDoc/OpenAPI 3.x/Swagger 2.0，JSON+YAML，$ref 与嵌套递归展开）· `contract_model.py` · `field_semantics.py` · `applicability.py` · `pattern_engine.py` · `case_generator.py` · `business_scenarios.py`（AF 业务场景补充生成 + 六项门禁 + prompt 自动注入 L5 产品知识）· `companion_scan.py`（配套接口解析：越权读面 / 真往返 / 列表与计数交叉验证的入口；同级扫描落空时从 L5 知识库捞候选，只进清单不自动填）· `dim_generators.py`（零产出维度补齐：编码国际化 / 组合交叉 / 请求追踪 / 批量 / 导出下载 / 按字段特征触发的业务域专项）· `llm_semantics.py`（语义层接入：大模型读契约产出事实、机械校验后并入，可选且不传时零影响）· `llm_fact_cases.py`（语义层兑付：把并入的事实转成用例，没并入就一条不产）；闭环 `assertion_engine.py` · `attribution_engine.py` · `artifact_readback.py`（产物回读校验：写盘后读回验编码/表头/列宽/编号/行数/证据链列）· `evidence_bundle.py` · `minimizer.py` · `regression.py` · `asset_registry.py` · `relationship_inference.py` · `risk_engine.py` · `plan_builder.py` · `report_enhance.py` · `pattern_feedback.py` · `ui_baseline.py`；适配器 `adapters/base.py` · `adapters/rest.py` · `adapters/sojump.py`（公共参数、鉴权、写操作门禁）· `adapters/graphql.py`（HTTP 200+errors 判失败，反假通过）· `adapters/grpc.py`（懒加载 grpcio，缺依赖实例化即报错）；结构约束 `schemas/contract_model.schema.json` · `schemas/test_plan.schema.json` · `schemas/execution_result.schema.json` · `schemas/finding.schema.json` · `schemas/regression_baseline.schema.json`
 
 **配置与实例资产**（`assets/`）：`finding_columns.json`（**台账列口径唯一来源**，深度流程与冒烟共用；改列名/增删列改这里，渲染层 `finding_row` 按它逐列取值，缺登记的表头在加载期就点名，不静默渲染成空值）· 占位模板 `personal_config.example.json` · `intelligent_config.example.json`（`flow.py --config`：`environment` 写门禁 / `execution` 档位与限流 / `inputs` 契约与基线）· `ui_baseline.example.json`（`template: true`，加载器主动跳过，防示范值造假缺陷）· `smoke_config.example.json` · `security_payloads.json`（G 维度安全载荷清单，case_generator 按语义标签选用）；问卷星参考实例 `smoke_config_wjx.json` · `smoke_cases_wjx.json` · `smoke_hooks_wjx.py`；说明与模板 `配置参数说明.md`（配置项 ↔ 接口参数 ↔ 中文含义）· `issue_template.csv`
 

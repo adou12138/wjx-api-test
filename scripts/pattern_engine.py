@@ -16,9 +16,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from field_semantics import unique_key_field, is_absolute_url, pick_by_family  # noqa: E402
+import discovery_profile  # noqa: E402
 
-# 生成超长值时的上限，避免为 200000 上限的字段真去造 20 万字符
-BIG_VALUE_CAP = 5000
+# 生成超长值时的上限（默认档），避免为 200000 上限的字段真去造 20 万字符。
+# 生效值走发现档（discovery 可放宽），见 s5_gen。
+BIG_VALUE_CAP = discovery_profile.DEFAULTS["big_cap"]
 
 
 def base_params(contract):
@@ -183,7 +185,7 @@ def p07_gen(c, ctx):
     out = []
     # 限量按字段族保代表：族内字段共享后端校验分支，按位置取前 N 会把
     # 排在后面的整个族砍掉，等于一类分支零覆盖
-    for f in pick_by_family(_opt_fields(c), 6):
+    for f in pick_by_family(_opt_fields(c), discovery_profile.get("null_state_fields")):
         for label, val in (("缺失", "__OMIT__"), ("null", None), ("空串", ""), ("空数组", [])):
             p = dict(ctx["base"])
             if val == "__OMIT__":
@@ -483,7 +485,7 @@ def s4_gen(c, ctx):
     fs = c.get("response_fields") or []
     absolute = [f for f in fs if is_absolute_url(f)]
     out = []
-    for i, f in enumerate(pick_by_family(absolute, 5), 1):
+    for i, f in enumerate(pick_by_family(absolute, discovery_profile.get("url_fields")), 1):
         out.append(_mk("C%02d" % i, "响应 URL 字段语义有效性（真能打开）：%s" % f["name"],
                        "C", "字段语义真值", dict(ctx["base"]), {"success": True},
                        check="url_alive", check_args={"field": f["name"]},
@@ -514,7 +516,7 @@ def s5_gen(c, ctx):
     out = []
     for i, f in enumerate(hits):
         p = dict(ctx["base"])
-        p[f["name"]] = "x" * min(f["max_len"], BIG_VALUE_CAP)
+        p[f["name"]] = "x" * min(f["max_len"], discovery_profile.get("big_cap"))
         out.append(_mk("J03" if i == 0 else "J%02d" % (i + 3),
                        "大字段：%s 接近长度上限时保存不应超时/失败" % f["name"],
                        "J", "性能与稳定性", p, {"success": True},
@@ -605,7 +607,7 @@ def ui1_gen(c, ctx):
     str_fields.sort(key=lambda f: 0 if any(h in f["name"].lower() for h in rich_hint) else 1)
     # 目标字段同样按族选：两个名额优先给不同族（如 html_content 与 title），
     # 而不是把两个名额花在同族的两个字段上
-    targets = [f["name"] for f in pick_by_family(str_fields, 2)] \
+    targets = [f["name"] for f in pick_by_family(str_fields, discovery_profile.get("ui_proxy_fields"))] \
         or ([fields[0]["name"]] if fields else [])
     resp_fields = [f["name"] for f in (c.get("response_fields") or [])]
     cases = []

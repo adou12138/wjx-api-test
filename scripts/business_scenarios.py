@@ -31,11 +31,23 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from contract_parser import load_contract                 # noqa: E402
 from case_generator import _mk, _tier_of, tier_stats      # noqa: E402
+import discovery_profile                                  # noqa: E402
 
-# 条数上限：业务场景每条都可能真实发请求（写接口会落数据），必须有硬上限。
-# 环境变量可覆盖，与 CONCURRENCY_MAX_TIMES / RATE_LIMIT_MAX_TIMES 同一套做法。
-AF_MAX_CASES = int(os.environ.get("WJX_AF_MAX_CASES", "8"))
+# 条数下限：太少的业务场景没有意义。
 AF_MIN_CASES = 3
+
+
+def af_max_cases():
+    """当前生效的 AF 条数上限：环境变量 > 发现档 > 默认。
+
+    业务场景每条都可能真实发请求（写接口会落数据），必须有硬上限；上限数值由
+    `discovery_profile` 集中管理（默认档 8、发现档 20），环境变量 `WJX_AF_MAX_CASES`
+    可临时覆盖。发现档放大的是"能生成多少条"，写操作仍受 flow 的写操作门禁约束。
+    """
+    env = os.environ.get("WJX_AF_MAX_CASES")
+    if env:
+        return int(env)
+    return discovery_profile.get("af_max_cases")
 AF_DIMS = {
     "AF1": "主业务流：典型用户操作路径，端到端走得通",
     "AF2": "业务规则校验：业务语义上的合法性约束（区别于 B 维度的技术参数校验）",
@@ -101,7 +113,11 @@ def business_facts(contract):
 
 
 def expected_count(contract):
-    """期望条数：按契约复杂度给，但受 AF_MAX_CASES 硬上限约束。"""
+    """期望条数：按契约复杂度给，受生效档位放大，再受硬上限约束。
+
+    发现档会让业务场景也"多探"——`want` 按复杂度给的基数不变，但整体放大后再与
+    放大后的上限取小。只放大上限而不放大基数，实际条数不会变（want 本来就 ≤8）。
+    """
     n = len(_fields(contract, "request_fields"))
     if n <= 5:
         want = 4
@@ -109,7 +125,9 @@ def expected_count(contract):
         want = 6
     else:
         want = 8
-    return max(AF_MIN_CASES, min(AF_MAX_CASES, want))
+    if discovery_profile.is_discovery():
+        want = int(want * 2.5)
+    return max(AF_MIN_CASES, min(af_max_cases(), want))
 
 
 # L5 知识注入的规模约束：prompt 膨胀会稀释契约事实的注意力，限量是硬要求。
@@ -277,8 +295,9 @@ def validate(cases, contract, want):
         issues.append({"check": "count", "msg": "生成 %d 条，期望 %d 条（不多不少）" % (len(cases), want)})
 
     # 2) 条数上限（即使 want 被改小，也不允许超上限）
-    if len(cases) > AF_MAX_CASES:
-        issues.append({"check": "cap", "msg": "超过条数上限 %d（可用 WJX_AF_MAX_CASES 调整）" % AF_MAX_CASES})
+    if len(cases) > af_max_cases():
+        issues.append({"check": "cap", "msg": "超过条数上限 %d（可用 WJX_AF_MAX_CASES 或 --profile discovery 调整）"
+                       % af_max_cases()})
 
     seen_ids = set()
     for i, c in enumerate(cases):
@@ -386,7 +405,13 @@ def main():
     ap.add_argument("--merge", action="store_true", help="把 AF 用例合并进主用例文件")
     ap.add_argument("--from", dest="src", default=None)
     ap.add_argument("--into", dest="dst", default=None)
+    ap.add_argument("--profile", default=None,
+                    help="生成档位：conservative（默认）| discovery（放大 AF 条数上限）。"
+                         "也可用 WJX_PROFILE 指定")
     args = ap.parse_args()
+
+    # 档位必须在 expected_count() 之前激活——条数上限是生成期读取的。
+    discovery_profile.activate(args.profile or discovery_profile.env_profile())
 
     if args.merge:
         if not (args.src and args.dst):
@@ -427,7 +452,7 @@ def main():
         if args.out:
             with open(args.out, "w", encoding="utf-8") as f:
                 f.write(prompt)
-            print("prompt 已写入 %s（期望 %d 条，上限 %d）" % (args.out, want, AF_MAX_CASES))
+            print("prompt 已写入 %s（期望 %d 条，上限 %d）" % (args.out, want, af_max_cases()))
         else:
             print(prompt)
         return 0

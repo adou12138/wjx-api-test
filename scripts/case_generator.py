@@ -27,8 +27,11 @@ import dim_generators                                    # noqa: E402
 import llm_fact_cases                                    # noqa: E402
 import pattern_engine                               # noqa: E402
 import check_key                                    # noqa: E402
+import discovery_profile                            # noqa: E402
 
-BIG_CAP = 5000
+# 超长用例上限的**默认档**数值。真正的生效值走 discovery_profile（发现档可放宽），
+# 这里保留常量是为了让 check_key._MAX_LEN_CAP 与之一致（单测守这条不变量）。
+BIG_CAP = discovery_profile.DEFAULTS["big_cap"]
 TYPE_BAD = {
     "int": "abc", "integer": "abc", "number": "abc", "float": "abc", "double": "abc",
     "bool": "not_a_bool", "boolean": "not_a_bool",
@@ -72,16 +75,72 @@ def _long_value(field, n):
     return (unit * (n // len(unit) + 1))[:n]
 
 
+# JSON 值对各类型 token 的"是否合法"。复合类型要选一个**对所有成员都非法**的值，
+# 否则注入的值恰好命中某个分支被判合法 → 得到"期望拒绝却成功"的假缺陷。
+_PRIMITIVE_VALID = {
+    "int": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "float": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "double": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+    "bool": lambda v: isinstance(v, bool),
+    "boolean": lambda v: isinstance(v, bool),
+    "string": lambda v: isinstance(v, str),
+    "str": lambda v: isinstance(v, str),
+    "text": lambda v: isinstance(v, str),
+    "varchar": lambda v: isinstance(v, str),
+    "char": lambda v: isinstance(v, str),
+    "array": lambda v: isinstance(v, list),
+    "list": lambda v: isinstance(v, list),
+    "object": lambda v: isinstance(v, dict),
+}
+
+# 候选非法值，按"结构性越界程度"排序：容器类优先（对 null/bool/数值/字符串全部非法）。
+_BAD_CANDIDATES = ([], {}, "__type_error__", 12345, True)
+
+
+def type_tokens(ftype):
+    """把类型串切成类型 token（与 check_key._declares_typed 同一口径）。
+
+    ``null / boolean`` → ``['null', 'boolean']``；``integer / string(int32)`` →
+    ``['integer', 'string', 'int32']``；``问卷id`` → ``['id']``（中文被切掉）。
+    """
+    return [t for t in re.split(r"[^a-z0-9]+", str(ftype or "").lower()) if t]
+
+
+def _compound_bad_value(tokens):
+    """复合类型：挑一个对**所有**成员都非法的值。
+
+    只要存在某个成员类型能接受该值，就不能用它（会得到"期望拒绝却成功"的假缺陷，
+    把合法的联合类型取值误报成缺陷）。所有候选都至少被一个成员接受时返回 None，
+    宁可跳过也不造假缺陷。
+    """
+    for tok in tokens:
+        if tok not in _PRIMITIVE_VALID:
+            return None  # 有无法判定的成员 → 不冒险
+    for cand in _BAD_CANDIDATES:
+        if all(not _PRIMITIVE_VALID[t](cand) for t in tokens):
+            return cand
+    return None
+
+
 def type_bad_for(field, ftype, idx=0):
-    """按字段语义与序位挑类型错误值（不再所有 string 字段统一 12345）。"""
-    bad = TYPE_BAD.get(ftype)
-    if bad is None:
+    """按字段类型（含复合）与语义序位挑类型错误值。
+
+    支持复合类型：契约写 ``null / boolean``、``integer / string(int32)`` 时，
+    按成员 token 选一个对所有分支都非法的值；对单一 string 字段仍按序轮换形态
+    （避免所有 string 字段统一 12345 打在同一校验分支）。
+    """
+    toks = [t for t in type_tokens(ftype) if t in TYPE_BAD]
+    if not toks:
         return None
-    if ftype not in _STRING_TOKENS:
-        return bad
-    if set(field.get("semantics") or []) & _NUMERIC_SEMS:
-        return 12345
-    return _STRING_TYPE_ERRORS[idx % len(_STRING_TYPE_ERRORS)]
+    if len(toks) == 1 and toks[0] in _STRING_TOKENS:
+        if set(field.get("semantics") or []) & _NUMERIC_SEMS:
+            return 12345
+        return _STRING_TYPE_ERRORS[idx % len(_STRING_TYPE_ERRORS)]
+    if len(toks) == 1:
+        return TYPE_BAD[toks[0]]
+    return _compound_bad_value(toks)
 
 
 def _mk(cid, name, dim, category, params, expect, **kw):
@@ -102,7 +161,7 @@ def _mk(cid, name, dim, category, params, expect, **kw):
 
 # 机械探测用例的 ID 前缀：由「字段 × 固定算子」笛卡尔展开或载荷清单遍历产生，
 # 不带业务语义。分层只影响报告统计口径，不影响执行与门禁。
-TIER_PROBE_PREFIXES = ("B-MISS-", "B-NULL-", "B-OVER-", "B-TYPE-", "B-LEN-", "G-")
+TIER_PROBE_PREFIXES = ("B-MISS-", "B-NULL-", "B-OVER-", "B-TYPE-", "B-LEN-", "B-BIG-", "G-")
 
 
 def _tier_of(case):
@@ -195,8 +254,10 @@ def gen_field_mutations(contract, base, action):
                            action=action, priority="P0", source="generator:type_error",
                            evidence=["contract:type"], cleanup={"required": True, "actions": ["delete_fixture"]}))
 
-        # 3) 长度边界：超长应被拒绝；恰好等于上限应成功
-        if f.get("max_len") and f["max_len"] <= BIG_CAP:
+        # 3) 长度边界：超长应被拒绝；恰好等于上限应成功。
+        #    生效上限走发现档：discovery 放宽到数万，让大字段也能做真边界用例。
+        cap = discovery_profile.get("big_cap")
+        if f.get("max_len") and f["max_len"] <= cap:
             p = dict(base)
             p[name] = _long_value(f, f["max_len"] + 1)
             out.append(_mk("B-LEN-OVER-%s" % name, "长度超限：%s %d+1 字符（应被拒绝）" % (name, f["max_len"]),
@@ -213,6 +274,19 @@ def gen_field_mutations(contract, base, action):
                            note="边界内值被拒即为边界判断错误（off-by-one）。"
                                 "若后端按字节校验而本用例按字符构造，会在此暴露长度口径差异——"
                                 "记「待确认」而非直接判缺陷"))
+        elif f.get("max_len") and discovery_profile.get("overlong_probe"):
+            # 大字段（max_len 超出上限，如 html_content=200000）：够不到 max_len+1，
+            # 退而构造**一条有界的大内容健壮性探针**——探"大体积合法内容后端吞不吞得下"
+            # （5xx / 静默截断 / 超时）。这不是边界用例，故预期为成功，且只探一次。
+            p = dict(base)
+            p[name] = _long_value(f, cap)
+            out.append(_mk("B-BIG-%s" % name,
+                           "大内容健壮性：%s 传 %d 字符合法内容（应成功，不 5xx/不静默截断）" % (name, cap),
+                           "B", "参数校验-大内容", p, {"success": True},
+                           action=action, priority="P1", source="generator:big_content",
+                           note="发现档专属：max_len 超出常规上限的大字段（如富文本）无法构造"
+                                "边界+1 用例，此条只探大体积合法内容是否被正常接受。"
+                                "5xx 或返回成功但回读内容被截断即缺陷；超时先归 ENV/网络"))
 
         # 4) 内容类字段的安全注入用例已升级为清单驱动：见 gen_security_payload_cases()
         #    （assets/security_payloads.json，按语义标签选载荷），此处不再内联生成。
@@ -307,7 +381,10 @@ def gen_security_payload_cases(contract, base, action, skipped=None):
     if not lib:
         return []
     cats = {c["id"]: c for c in lib.get("categories", [])}
-    limit = int((lib.get("limits") or {}).get("max_payloads_per_field_per_category", 2))
+    # 生效条数走发现档：discovery 可放宽（如 2 → 4，含"字面 + 变体绕过"两种样本）；
+    # 默认档 None → 沿用清单自带 limits，与接入前一致。
+    lib_limit = int((lib.get("limits") or {}).get("max_payloads_per_field_per_category", 2))
+    limit = discovery_profile.get("payload_per_field_per_category") or lib_limit
     out = []
     for f in (contract.get("request_fields") or []):
         name = f["name"]
@@ -871,9 +948,19 @@ def main():
                     help="关闭同级目录扫描自动推断配套接口（只用显式声明/命令行指定）")
     ap.add_argument("--llm-facts", dest="llm_facts",
                     help="语义层事实 JSON（scripts/llm_semantics.py 产出，可选）")
+    ap.add_argument("--profile", default=None,
+                    help="生成档位：conservative（默认）| discovery（放宽探测广度，"
+                         "集中放宽超长上限/载荷条数/字段族配额）。也可用 WJX_PROFILE 指定")
     ap.add_argument("--out", default="generated_cases.json", help="输出用例文件")
     ap.add_argument("--print", dest="do_print", action="store_true", help="只打印摘要不落盘")
     args = ap.parse_args()
+
+    # 档位必须在 generate() 之前激活——限额是生成期读取的。
+    active = discovery_profile.activate(args.profile or discovery_profile.env_profile())
+    if active == "discovery":
+        print("发现档：探测广度已放宽（超长上限=%s 载荷/字段/类=%s 字段族配额已放大）；"
+              "断言口径与门禁不变。" % (discovery_profile.get("big_cap"),
+                                    discovery_profile.get("payload_per_field_per_category")))
 
     read_params = None
     if args.read_params:
