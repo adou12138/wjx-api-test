@@ -22,6 +22,9 @@ import discovery_profile  # noqa: E402
 # 生效值走发现档（discovery 可放宽），见 s5_gen。
 BIG_VALUE_CAP = discovery_profile.DEFAULTS["big_cap"]
 
+# 状态字段覆盖上限（v4.26.0）：E02/E04 逐个状态字段生成，多状态字段接口不再只测第一个。
+STATE_MAX_FIELDS = 4
+
 
 def base_params(contract):
     """取请求示例里的业务参数（剔除公共参数），作为用例变异的基线。"""
@@ -406,12 +409,13 @@ def s3_gen(c, ctx):
 
     # E02：状态字段往返一致性——写了什么状态就该读回什么状态。
     # 属于接口侧可自动判定的部分（不需要知道"哪些转换合法"，只需知道"值没被吞掉"）。
-    req_status = _status_fields(c, "request_fields")
-    if req_status:
-        name = req_status[0]["name"]
+    req_status = _status_fields(c, "request_fields")[:STATE_MAX_FIELDS]
+    for idx, sf in enumerate(req_status):
+        name = sf["name"]
         ra = ctx.get("read_action")
         cargs = {"read_action": ra, "read_params": ctx.get("read_params") or {}} if ra else {"fields": [name]}
-        out.append(_mk("E02", "状态字段往返一致性：%s 写入值应原样回读" % name, "E", "状态机",
+        out.append(_mk("E02" if idx == 0 else "E02-%s" % name,
+                       "状态字段往返一致性：%s 写入值应原样回读" % name, "E", "状态机",
                        dict(ctx["base"]), {"success": True},
                        check="roundtrip", check_args=cargs,
                        priority="P1", source="pattern:S3",
@@ -434,34 +438,34 @@ def s3_gen(c, ctx):
 
     # E04：把转换矩阵**跑成事实表**（逐个目标状态提交 + 回读），人不从零设计。
     # 合法性仍不猜（那是 E03 的人工活），只硬判"接受但回读值被改写"这一确定缺陷。
-    st_field, st_vals = None, []
-    for f in _status_fields(c, "request_fields"):
-        st_field = f
-        st_vals = [v for v, _ in (f.get("enum") or [])]
-        if st_vals:
-            break
-    if st_field and not st_vals:
-        # 请求侧没声明取值枚举时，借用响应侧声明的状态取值当目标值
-        for f in _status_fields(c, "response_fields"):
-            st_vals = [v for v, _ in (f.get("enum") or [])]
-            if st_vals:
-                break
-    if st_field and st_vals:
-        out.append(_mk("E04", "状态转换矩阵实测：%s 逐个目标状态提交并回读" % st_field["name"],
-                       "E", "状态机", dict(ctx["base"]), {"success": True},
-                       check="state_transition",
-                       check_args={"field": st_field["name"], "values": st_vals[:8],
-                                   "read_action": ctx.get("read_action"),
-                                   "read_params": ctx.get("read_params") or {}},
-                       priority="P1", source="pattern:S3",
-                       note="用例本身按 base 参数跑（正常请求），矩阵由 check 逐个状态实测。"
-                            "产出事实表：哪些目标状态被接受/被拒、接受后回读值；"
-                            "合法性按业务状态图人工核对（见 E03）。"
-                            "硬判的只有「接受但回读值被改写」——确定的状态参数失效缺陷"))
-    elif st_field:
+    # v4.26.0：覆盖**所有**状态字段（而非只第一个），每个字段用它**自己**声明的枚举当目标值
+    #（修掉旧版"请求字段名配响应枚举"的错配），受 STATE_MAX_FIELDS 上限约束。
+    st_candidates = []
+    for f in _status_fields(c, "request_fields") + _status_fields(c, "response_fields"):
+        vals = [v for v, _ in (f.get("enum") or [])]
+        if vals:
+            st_candidates.append((f, vals))
+    any_status = bool(_status_fields(c, "request_fields") or _status_fields(c, "response_fields"))
+    st_candidates = st_candidates[:STATE_MAX_FIELDS]
+    if st_candidates:
+        for idx, (st_field, st_vals) in enumerate(st_candidates):
+            out.append(_mk("E04" if idx == 0 else "E04-%s" % st_field["name"],
+                           "状态转换矩阵实测：%s 逐个目标状态提交并回读" % st_field["name"],
+                           "E", "状态机", dict(ctx["base"]), {"success": True},
+                           check="state_transition",
+                           check_args={"field": st_field["name"], "values": st_vals[:8],
+                                       "read_action": ctx.get("read_action"),
+                                       "read_params": ctx.get("read_params") or {}},
+                           priority="P1", source="pattern:S3",
+                           note="用例本身按 base 参数跑（正常请求），矩阵由 check 逐个状态实测。"
+                                "产出事实表：哪些目标状态被接受/被拒、接受后回读值；"
+                                "合法性按业务状态图人工核对（见 E03）。"
+                                "硬判的只有「接受但回读值被改写」——确定的状态参数失效缺陷"))
+    elif any_status:
         # 有状态字段但契约没给取值枚举 → 矩阵无从构造。点名待补，不静默当"已覆盖 E"。
+        name = (_status_fields(c, "request_fields") or _status_fields(c, "response_fields"))[0]["name"]
         out.append(_mk("TODO-E-状态枚举",
-                       "E 维度：状态字段 %s 未声明取值枚举，转换矩阵需人工补充" % st_field["name"],
+                       "E 维度：状态字段 %s 未声明取值枚举，转换矩阵需人工补充" % name,
                        "E", "待补充", dict(ctx["base"]), {"success": False},
                        enabled=False, needs="manual", priority="P1", source="pattern:S3",
                        note="契约里有状态字段但没写取值枚举（enum），自动生成器拿不到目标状态清单，"
