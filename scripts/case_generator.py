@@ -161,7 +161,7 @@ def _mk(cid, name, dim, category, params, expect, **kw):
 
 # 机械探测用例的 ID 前缀：由「字段 × 固定算子」笛卡尔展开或载荷清单遍历产生，
 # 不带业务语义。分层只影响报告统计口径，不影响执行与门禁。
-TIER_PROBE_PREFIXES = ("B-MISS-", "B-NULL-", "B-OVER-", "B-TYPE-", "B-LEN-", "B-BIG-", "G-")
+TIER_PROBE_PREFIXES = ("B-MISS-", "B-NULL-", "B-OVER-", "B-TYPE-", "B-LEN-", "B-BIG-", "B-COMBO-", "G-")
 
 
 def _tier_of(case):
@@ -315,6 +315,49 @@ def gen_field_mutations(contract, base, action):
 
         # 4) 内容类字段的安全注入用例已升级为清单驱动：见 gen_security_payload_cases()
         #    （assets/security_payloads.json，按语义标签选载荷），此处不再内联生成。
+    return out
+
+
+# 机械组合覆盖上限（v4.25.0）：参与组合的字段代表数 + 组合用例总数，防 n² 爆炸。
+COMBO_MAX_FIELDS = 8
+COMBO_MAX_CASES = 24
+
+
+def gen_combination_cases(contract, base, action):
+    """机械组合覆盖（v4.25.0）：多个字段同时取各自**单个就非法**的值 → 应被拒绝。
+
+    只做 sound 的组合：每个参与字段取它单独提交就应被拒的值（类型错），组合后
+    **必然应被拒绝**——不猜互斥/条件必填（契约极少声明，猜了就是假缺陷）。测的是
+    "后端是否逐个校验所有参数"，而非只校验第一个就返回。
+
+    有界：字段代表数 + 组合总数双上限；不要求错误提及特定字段（后端可能只报第一个），
+    只断言"应被拒绝"。B-COMBO-* 归 probe 层、走来源型身份证、**不进对账分母**。
+    """
+    out = []
+    fields = [f for f in (contract.get("request_fields") or [])
+              if f.get("name") and type_bad_for(f, (f.get("type") or "").lower()) is not None]
+    reps = fields[:COMBO_MAX_FIELDS]
+    n = 0
+    for i in range(len(reps)):
+        for j in range(i + 1, len(reps)):
+            if n >= COMBO_MAX_CASES:
+                return out
+            fa, fb = reps[i], reps[j]
+            na, nb = fa["name"], fb["name"]
+            ba = type_bad_for(fa, (fa.get("type") or "").lower())
+            bb = type_bad_for(fb, (fb.get("type") or "").lower())
+            if ba is None or bb is None:
+                continue
+            p = dict(base)
+            p[na] = ba
+            p[nb] = bb
+            out.append(_mk("B-COMBO-%s__%s" % (na, nb),
+                           "组合非法：%s 与 %s 同时取非法值（应被拒绝）" % (na, nb),
+                           "B", "参数校验-组合", p, {"success": False},
+                           action=action, priority="P2", source="generator:combination",
+                           note="两字段各自单独即非法，组合后应被拒绝；测后端是否逐个校验所有"
+                                "参数（而非只报第一个）。不要求错误提及特定字段，只断言应被拒绝。"))
+            n += 1
     return out
 
 
@@ -851,6 +894,7 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
                             read_action=ra, read_params=rp)
     cases += gen_cross_verify_cases(contract, base, contract.get("action"), ctx)
     cases += gen_field_mutations(contract, base, contract.get("action"))
+    cases += gen_combination_cases(contract, base, contract.get("action"))
     payload_skipped = []
     cases += gen_security_payload_cases(contract, base, contract.get("action"),
                                         skipped=payload_skipped)
