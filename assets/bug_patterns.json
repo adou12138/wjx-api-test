@@ -1,0 +1,5 @@
+{
+  "version": "1.0",
+  "note": "缺陷模式池：由 bug_pattern_pool.py --merge 从真实缺陷产物累积，只增不改 id；冷启动为空，随轮次增长。只累积与排序，不自动生成用例。",
+  "patterns": []
+}
