@@ -1,6 +1,6 @@
 ---
 name: "wjx-api-test"
-version: "4.29.0"
+version: "4.30.0"
 agent_created: true
 description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 30 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。AF 业务场景 prompt 自动注入 L5 产品知识（检索失败自动降级为纯契约，不影响主流程）；配套接口解析在同级扫描落空时从 L5 知识库捞候选（只进清单不自动填，供人工 --read-action 指定）。含 30 类维度框架、高频缺陷模式清单、18 条实测陷阱。`--profile discovery` 发现档把探测广度限额（超长上限 / 安全载荷条数 / 字段族配额 / AF 条数）集中到一处开关，用于"尽量多发现问题"；**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
 ---
@@ -57,6 +57,12 @@ python scripts/precondition_scan.py --markdown --store runtime_dependencies.json
 
 python scripts/case_runner.py --cases cases.json --dry-run         # 声明式用例执行器
 python scripts/case_runner.py --cases cases.json --only B,H
+
+# 用例执行率对账：计划 vs 实际（只有 PASS/FAIL 算真判定；SKIPPED/N-A 单列且原因必填）
+python scripts/case_coverage.py --plan cases.json --results <产物>/api_test_report_full.json --out case_coverage.json
+python scripts/case_coverage.py --plan cases.json --results <产物>/api_test_report_full.json \
+    --expect-categories AF --exempt-categories "AF:本轮未启用大模型链路" --min-rate 0.8 --enforce
+                                                                          # 见 references/case-coverage.md
 
 # 产物回读校验（交付前自检：编码/表头/列宽/编号/行数/证据链列）
 python scripts/artifact_readback.py --dir .                # 自动识别目录内台账与报告

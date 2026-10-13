@@ -1,0 +1,67 @@
+{
+  "$comment": "用例执行率对账产物的形状定义。执行率由 scripts/case_coverage.py 产出；状态词表与 case_runner 写入 results 的字面量一致（PASS/FAIL/SKIPPED/N-A）。",
+  "version": "1.0",
+  "coverage": {
+    "description": "--out 产出的对账结果；可直接放进 report_full.json 的 coverage 段",
+    "type": "object",
+    "properties": {
+      "generatedAt": {"type": "string"},
+      "planned": {
+        "type": "object",
+        "properties": {
+          "total": {"type": "integer", "description": "计划内用例数"},
+          "byDimension": {"type": "object"},
+          "byCategory": {"type": "object"},
+          "coveragePlan": {"type": "array", "items": {"type": "string"}, "description": "生成期声明的必测维度（原样带回，便于对照）"}
+        }
+      },
+      "executed": {
+        "type": "object",
+        "description": "严格口径：只有 PASS/FAIL 算已执行",
+        "properties": {
+          "total": {"type": "integer"},
+          "rate": {"type": "number", "description": "严格执行的用例数 / 计划总数，0–1"},
+          "looseTotal": {"type": "integer", "description": "宽松口径：计划内有任何 result 的用例数（含 SKIPPED/N-A），与既有 coverage_gate 口径一致"},
+          "byDimension": {"type": "object"}
+        }
+      },
+      "notExecuted": {
+        "type": "object",
+        "properties": {
+          "total": {"type": "integer"},
+          "byDimension": {"type": "object"},
+          "unexplained": {"type": "array", "items": {"type": "string"}, "description": "未写明原因/状态非法/静默丢失的条目；--enforce 时非零退出"}
+        }
+      },
+      "silentLost": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "计划里有、results 里没有任何执行记录的用例 ID（当前 runner 每条都留痕，应为空；将来若有路径绕过留痕会立刻暴露）"
+      },
+      "skippedOnlyDimensions": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "在既有 coverage_gate 里算「已触及」但真判定为零的维度——SKIPPED 结果也带 dimension，是既有门禁的盲区"
+      },
+      "categories": {
+        "type": "object",
+        "description": "类别级对账（用于堵「整类用例缺席无声」，如 AF 业务场景不在默认主链路）",
+        "properties": {
+          "declared": {"type": "array", "items": {"type": "string"}, "description": "--expect-categories 声明的类别"},
+          "covered": {"type": "array", "items": {"type": "string"}, "description": "至少有一条该类用例真实执行（PASS/FAIL）的类别"},
+          "missing": {"type": "array", "items": {"type": "string"}},
+          "exempt": {
+            "type": "array",
+            "description": "显式豁免，必须带理由；不进 missing、不进分子也不进分母",
+            "items": {
+              "type": "object",
+              "properties": {"name": {"type": "string"}, "reason": {"type": "string"}}
+            }
+          }
+        }
+      },
+      "unknownResults": {"type": "array", "items": {"type": "string"}, "description": "results 里出现计划外的用例 ID，只告警不阻塞"},
+      "note": {"type": "string"}
+    }
+  }
+}
