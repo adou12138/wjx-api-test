@@ -101,3 +101,26 @@ def attribute(error=None, response=None, assertion_ok=True, contract_confidence=
                 "reason": "low-confidence contract evidence", "next_action": "confirm contract"}
     return {"category": "DEFECT", "confidence": contract_confidence,
             "reason": "assertion violated trusted contract", "next_action": "create finding"}
+
+
+def detect_flaky(results):
+    """稳定性检测（v4.29.0）：同一用例在结果集里出现多次且终态不一致 → 记"不稳定"。
+
+    sound 边界：只在**同一用例确有多条记录**时才判；单次结果无从比较、不判。
+    不重新执行（无重跑基础设施），只分析已有结果集——回归/重跑把多轮结果并进来时自动生效。
+    返回 {case_id: [出现的不同终态]}，空 dict 表示无不稳定项。
+    """
+    by_case = {}
+    for r in results or []:
+        if not isinstance(r, dict):
+            continue
+        cid = r.get("case_no") or r.get("id") or r.get("cid")
+        st = r.get("status")
+        if cid and st:
+            by_case.setdefault(str(cid), []).append(str(st))
+    flaky = {}
+    for cid, sts in by_case.items():
+        uniq = sorted(set(sts))
+        if len(uniq) > 1:
+            flaky[cid] = uniq
+    return flaky

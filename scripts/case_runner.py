@@ -29,6 +29,7 @@ import api_test_runner as R  # noqa: E402
 import ui_baseline as UB     # noqa: E402
 import minimizer             # noqa: E402
 import assertion_engine as AE  # noqa: E402
+import attribution_engine      # noqa: E402
 
 try:
     from personal_config import resolve_placeholders
@@ -1225,7 +1226,9 @@ def write_reports(out_prefix="api_test"):
             w.writerow(R.finding_row(x))
     with open("%s_report_full.json" % out_prefix, "w", encoding="utf-8") as f:
         json.dump({"results": R.results, "findings": R.findings,
-                   "coverage_plan": R.COVERAGE_PLAN}, f, ensure_ascii=False, indent=2)
+                   "coverage_plan": R.COVERAGE_PLAN,
+                   "flaky": attribution_engine.detect_flaky(R.results)}, f,
+                  ensure_ascii=False, indent=2)
     print("\n问题台账 -> %s_issues.csv" % out_prefix)
     print("完整报告 -> %s_report_full.json" % out_prefix)
 
