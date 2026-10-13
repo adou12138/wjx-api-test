@@ -35,6 +35,14 @@ class TestExtractAndSeverity(unittest.TestCase):
     def test_extract_bare_list(self):
         self.assertEqual(len(B.extract_items([{"a": 1}, "notdict"])), 1)
 
+    def test_results_not_a_defect_source(self):
+        """results 是逐用例执行结果（含 PASS），不是缺陷——不得当缺陷源（v4.29.0 审查修复）。"""
+        # findings 为空时应返回空，不回落到 results
+        self.assertEqual(B.extract_items({"results": [{"dimension": "B", "status": "PASS"}],
+                                          "findings": []}), [])
+        # 连 findings 都没有、只有 results 时也不提取
+        self.assertEqual(B.extract_items({"results": [{"dimension": "B"}]}), [])
+
     def test_severity_normalization(self):
         self.assertEqual(B.severity_of({"severity": "P0"}), "P0")
         self.assertEqual(B.severity_of({"severity": "高"}), "P1")

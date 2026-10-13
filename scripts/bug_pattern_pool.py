@@ -28,7 +28,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_POOL = HERE.parent / "assets" / "bug_patterns.json"
-ITEM_KEYS = ("findings", "issues", "defects", "violations", "results")
+# 缺陷来源键：**不含 "results"**——report_full.json 的 results 是逐用例执行结果（含 PASS），
+# 不是缺陷；把它当来源会把执行结果误并进模式池。findings 才是缺陷本体。
+ITEM_KEYS = ("findings", "issues", "defects", "violations")
 SEV_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 
