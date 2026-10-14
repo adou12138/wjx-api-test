@@ -64,6 +64,17 @@ python scripts/case_coverage.py --plan ... --results ... \
 | `N/A` | 不适用（如缺 `cross_appid` 无法归因），reason 必填 | 未执行 |
 | 其他/空 | 非法 | 未执行 + 进 `unexplained`（门禁拦） |
 
+## 同一用例多条记录（重跑 / 回归并进）
+
+`results` 是**纯append 列表**（`case_runner` 每次执行都 append，无覆盖机制），所以同一用例
+出现多条记录是**正常产物**。本模块按「**真判定优先**」取状态：只要有一条 `PASS`/`FAIL`
+就算这条用例真跑过——不能因为首条是 `SKIPPED` 就判它未执行（首条写了 reason 时还不落
+`unexplained`，等于完全静默地低估执行率）。这条口径与 `detect_flaky` 一致（它也是按多条
+记录判"不稳定"）。
+
+多记录情况落进 `multipleRecords`：`caseIds` 列出所有多记录用例，`flakyCaseIds` 列出终态
+不一致的（不稳定）。**不静默**——重跑导致的"同一用例两个状态"必须能被看见。
+
 ## 边界
 
 - **不改任何生成器/执行器**：只加对账层，纯增量；

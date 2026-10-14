@@ -122,6 +122,34 @@ class CaseCoverageTests(unittest.TestCase):
         cov = CC.compute(PLAN, results, [], [])
         self.assertEqual(cov["unknownResults"], ["ZZ-99"])
 
+    def test_rerun_takes_executed_record_over_skipped(self):
+        """回归（审查抓到）：results 是纯 append 列表、无覆盖机制（case_runner 每次执行都
+        append），所以同一用例多条记录是**正常产物**（重跑/回归并进）。原实现用
+        setdefault 取首条 → 「首轮 SKIPPED、重跑 PASS」的用例被记成未执行，
+        且因首条带 reason 而**静默**（不落 unexplained），与同批 v4.29.0 的
+        detect_flaky（按多条记录判不稳）口径直接矛盾。"""
+        results = [res("B-TYPE-age", status="SKIPPED", reason="首轮未启用")]
+        results += [res("B-TYPE-age", status="PASS")]
+        results += [res("B-LEN-OVER-title", status="PASS")]
+        cov = CC.compute(PLAN, results, [], [])
+        self.assertIn("B-TYPE-age", cov["executed"]["caseIds"],
+                      "重跑通过的用例必须算已执行（真判定优先于跳过）")
+        self.assertNotIn("B-TYPE-age", cov["silentLost"])
+        self.assertEqual(cov["silentLost"], ["AF1-01", "B-MISS-name", "E-01"],
+                         "未给结果的用例进静默丢失（与重跑情形无关）")
+        self.assertIn("B-TYPE-age", cov["multipleRecords"]["caseIds"],
+                      "多记录情况必须落进产物，不静默")
+
+    def test_multiple_records_flaky_is_named(self):
+        """多记录且终态不一致 = 不稳定，应被点名（与 detect_flaky 同口径）。"""
+        results = [res("B-TYPE-age", status="PASS"),
+                   res("B-TYPE-age", status="FAIL"),
+                   res("B-LEN-OVER-title", status="PASS")]
+        cov = CC.compute(PLAN, results, [], [])
+        self.assertIn("B-TYPE-age", cov["multipleRecords"]["flakyCaseIds"],
+                      "同用例终态不一致必须点名为不稳定")
+        self.assertNotIn("B-LEN-OVER-title", cov["multipleRecords"]["flakyCaseIds"])
+
     def test_enforce_exit_codes(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)

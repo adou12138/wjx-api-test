@@ -98,11 +98,25 @@ def _dim_match(case_dim, case_cat, key) -> bool:
 def compute(plan, results, expect_categories, exempt_categories) -> dict:
     cases = plan_cases(plan)
     by_id = {c["id"]: c for c in cases}
-    res_by_id = {}
+    # 同一用例可能有多条记录：results 是纯 append 列表（case_runner 每次执行都 append，
+    # 无覆盖机制），重跑/回归并进就会出现重复。此时**真判定优先**——只要有一条
+    # PASS/FAIL 就说明这条用例真跑过，不能因为首条是 SKIPPED 就判它未执行
+    # （同批 detect_flaky 也是按多条记录判不稳，两处口径必须一致）。
+    res_by_id, multi = {}, {}
     for r in results:
         rid = _norm(r.get("case_no") or r.get("id"))
-        if rid:
-            res_by_id.setdefault(rid, r)   # 同 id 多条（如重跑）取首条
+        if not rid:
+            continue
+        multi.setdefault(rid, []).append(r)
+        prev = res_by_id.get(rid)
+        if prev is None:
+            res_by_id[rid] = r
+        elif _norm(prev.get("status")).upper() not in EXECUTED and \
+                _norm(r.get("status")).upper() in EXECUTED:
+            res_by_id[rid] = r          # 后到的真判定覆盖先前的跳过
+    multiple = sorted(cid for cid, rs in multi.items() if len(rs) > 1)
+    flaky = sorted(cid for cid in multiple
+                   if len({_norm(r.get("status")).upper() for r in multi[cid]}) > 1)
 
     executed, not_executed, unexplained = 0, 0, []
     exec_by_dim, skip_by_dim = {}, {}
@@ -173,11 +187,18 @@ def compute(plan, results, expect_categories, exempt_categories) -> dict:
             "rate": rate,
             "looseTotal": loose_total,
             "byDimension": dict(sorted(exec_by_dim.items())),
+            "caseIds": sorted(executed_ids),
         },
         "notExecuted": {
             "total": not_executed,
             "byDimension": dict(sorted(skip_by_dim.items())),
             "unexplained": unexplained,
+        },
+        "multipleRecords": {
+            "caseIds": multiple,
+            "flakyCaseIds": flaky,
+            "note": "同一用例在 results 里出现多条记录（重跑/回归并进）。本模块按"
+                    "「真判定优先」取状态；终态不一致的即不稳定，与 detect_flaky 同口径。",
         },
         "silentLost": sorted(cid for cid in by_id if cid not in res_by_id),
         "skippedOnlyDimensions": skipped_only,
