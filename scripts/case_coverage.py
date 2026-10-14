@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用例执行率闭环：计划 vs 实际（wjx-api-test v4.30.0）。
+"""用例执行率闭环：计划 vs 实际（wjx-api-test v4.30.1）。
 
 为什么需要（两个真实缺口 + 一项产物化增量，读实现核验后确认）：
   ① **AF 业务场景整类缺席无声**：`flow.py` 主链路未接入 `business_scenarios`，
@@ -7,13 +7,13 @@
      ⇒ 唯一能测业务语义的一类用例可能 0 条，报告却如常。
   ② **没有"计划 vs 实际"的逐条对账**：无权威计划清单落盘；`--only` 直接改写 cases 不留声明。
 
-  产物化增量：`coverage_gate()` **已经**按 EXECUTED_STATUSES 过滤（只有 PASS/FAIL 算触及），
+  产物化增量：`coverage_gate()` **已经**按 EXECUTED_STATUSES 过滤（只有 PASS/FAIL/PRECONDITION_UNMET 算触及），
   并把"全部被跳过"的维度记成「假覆盖」缺陷——判定本身是对的。本模块把它从 **stdout 提示**
   升级为**可落盘 / 可进报告 / 可 --enforce 的产物**，并给到用例级明细。
 
 本模块**只加对账层，不改** case_runner / coverage_gate / 任何生成器：
   - `executed.total/rate` 是**严格口径**（只有 PASS/FAIL 算真判定）；
-  - `executed.looseTotal` 是**宽松口径**（任一 result 即触及，与既有 coverage_gate 一致）；
+  - `executed.looseTotal` 是**宽松口径**（任一 result 即触及，含 SKIPPED/N/A；比 coverage_gate 更宽——门禁只认 EXECUTED_STATUSES，SKIPPED-only 维度被标「假覆盖」不算触及）；
   - 两者差异通过 `skippedOnlyDimensions` 落进产物（既有门禁只 stdout 打印），供人决策。
 
 用法：
@@ -152,7 +152,8 @@ def compute(plan, results, expect_categories, exempt_categories) -> dict:
     total = len(by_id)
     rate = round(executed / total, 4) if total else 0.0
 
-    # 宽松口径（与既有 coverage_gate 同规则：任一 result 即视为触及该维度，只算计划内用例）
+    # 宽松口径：比 coverage_gate 更宽——任一 result 即计（含 SKIPPED/N/A），只算计划内用例。
+    # coverage_gate 只认 EXECUTED_STATUSES（PASS/FAIL/PRECONDITION_UNMET），SKIPPED-only 维度被标「假覆盖」不算触及。
     loose_dims = {_norm(by_id[cid].get("dimension")) or "(未标维度)"
                   for cid in res_by_id if cid in by_id}
     loose_total = sum(1 for cid in res_by_id if cid in by_id)
@@ -209,10 +210,10 @@ def compute(plan, results, expect_categories, exempt_categories) -> dict:
             "exempt": exempt,
         },
         "unknownResults": unknown,
-        "note": "严格口径：只有 PASS/FAIL 算已执行；looseTotal 是与既有 coverage_gate 一致的"
-                "宽松口径（任一 result 即触及）。差异集中在 skippedOnlyDimensions——"
-                "这些维度在既有门禁里算「已触及」，但真判定为零，请人工决定是否收紧。"
-                "本模块不修改 case_runner / coverage_gate，既有门禁结论不受影响。",
+        "note": "严格口径：只有 PASS/FAIL 算已执行（coverage_gate 还多认 PRECONDITION_UNMET）；"
+                "looseTotal 是比 coverage_gate 更宽的宽松口径（任一 result 即触及，含 SKIPPED/N/A）。"
+                "差异集中在 skippedOnlyDimensions——这些维度在既有门禁里被标为「假覆盖」（不算触及），"
+                "但真判定为零，请人工决定是否收紧。本模块不修改 case_runner / coverage_gate，既有门禁结论不受影响。",
     }
 
 
@@ -289,7 +290,7 @@ def main() -> int:
         print("警告：results 里出现计划外的用例 ID {} 个（可能来自旧用例文件），不阻塞门禁".format(
             len(cov["unknownResults"])), file=sys.stderr)
     if cov["skippedOnlyDimensions"]:
-        print("提醒：维度 {} 在既有门禁里算「已触及」但真判定为零，请人工确认是否需要收紧"
+        print("提醒：维度 {} 在既有门禁里被标为「假覆盖」（不算触及）但真判定为零，请人工确认是否需要收紧"
               .format("、".join(cov["skippedOnlyDimensions"])), file=sys.stderr)
     return 0
 

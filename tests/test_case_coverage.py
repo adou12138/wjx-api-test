@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""用例执行率闭环契约测试（wjx-api-test v4.30.0）。
+"""用例执行率闭环契约测试（wjx-api-test v4.30.1）。
 
-注意：既有 `coverage_gate()` **已经**按 EXECUTED_STATUSES 过滤（只有 PASS/FAIL 算触及，
+注意：既有 `coverage_gate()` **已经**按 EXECUTED_STATUSES 过滤（只有 PASS/FAIL/PRECONDITION_UNMET 算触及，
 全被跳过的维度会记「假覆盖」缺陷）。本模块测的是它的增量部分：逐条对账、reason 必填、
 类别级对账，以及把「假覆盖」从 stdout 提示升级为可落盘/可门禁的产物。
 
@@ -82,7 +82,7 @@ class CaseCoverageTests(unittest.TestCase):
         cov = CC.compute(PLAN, results, [], [])
         self.assertEqual(cov["executed"]["total"], 1)
         self.assertEqual(cov["notExecuted"]["total"], 4)
-        # 宽松口径（与既有 coverage_gate 一致：SKIPPED 也计入触及）单列，便于对照差异
+        # 宽松口径（比 coverage_gate 更宽：SKIPPED 也计入触及，而门禁将其标为「假覆盖」）单列，便于对照差异
         self.assertEqual(cov["executed"]["looseTotal"], 2)
 
     def test_skipped_only_dimensions_named(self):

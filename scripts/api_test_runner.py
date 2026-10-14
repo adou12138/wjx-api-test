@@ -1782,7 +1782,7 @@ def coverage_gate():
     缺口即记【缺陷(覆盖率缺口)】并在汇总里高亮；设 WJX_STRICT_COVERAGE=1 时直接 exit(2)。
 
     未声明 COVERAGE_PLAN（默认）则跳过，仅提示建议——模板不强制，但分享前建议声明以启用反漏测。
-    实际触及维度 = 各用例 result.dimension ∪ 各问题记录 finding.dimension（一个维度被任一用例或问题覆盖即算触及）。
+    实际触及维度 = 各**已执行**用例 result.dimension ∪ 各问题记录 finding.dimension（一个维度被任一 PASS/FAIL/PRECONDITION_UNMET 用例或问题覆盖即算触及；SKIPPED/N/A 只进 touched_only、被标「假覆盖」，不算触及）。
     """
     global coverage_blocked
     if not COVERAGE_PLAN:
