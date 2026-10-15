@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用例执行率闭环：计划 vs 实际（wjx-api-test v4.34.0）。
+"""用例执行率闭环：计划 vs 实际（wjx-api-test v4.35.0）。
 
 为什么需要（两个真实缺口 + 一项产物化增量，读实现核验后确认）：
   ① **AF 业务场景整类缺席无声**：`flow.py` 主链路未接入 `business_scenarios`，

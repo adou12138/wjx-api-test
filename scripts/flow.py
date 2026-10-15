@@ -489,6 +489,14 @@ def main():
     elif not args.contract and inputs["contract"]:
         print("契约来自执行配置 inputs.contracts：%s" % contract_path)
 
+    if not os.path.isfile(contract_path):
+        sys.stderr.write(
+            "契约文件不存在：%s\n"
+            "  支持格式：ShowDoc Markdown(.md) / OpenAPI 3.x / Swagger 2.0(.json/.yaml/.yml)\n"
+            "  也可改用 --action 从知识库定位，或在执行配置 inputs.contracts 中给出路径。\n"
+            % contract_path)
+        sys.exit(2)
+
     os.makedirs(args.out_dir, exist_ok=True)
     reset_runtime()
     if inputs["ui_baseline"]:

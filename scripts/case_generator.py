@@ -947,6 +947,13 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
     check_key.assign_keys(uniq)
     ck_rec = check_key.reconcile(uniq, contract)
 
+    if not contract.get("request_fields") and not contract.get("response_fields"):
+        sys.stderr.write(
+            "警告：契约未解析出任何请求/响应字段（格式不符或空契约？）——本轮用例将以占位为主，"
+            "不代表设计覆盖。\n"
+            "  请检查：① 契约格式是否为 ShowDoc Markdown / OpenAPI 3.x / Swagger 2.0；\n"
+            "  ② 或改用声明式 JSON 契约显式给出 request_fields；详见 references/auto_generation.md。\n")
+
     return {
         "action": contract.get("action"),
         "name": contract.get("name"),
