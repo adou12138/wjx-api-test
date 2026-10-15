@@ -113,6 +113,7 @@ class TestDeriveKey(unittest.TestCase):
             ("B-LEN-OVER-name", "above_maximum:name"),
             ("B-LEN-EDGE-name", "at_maximum:name"),
             ("B-NULL-x", "null_value:x"),
+            ("B-ENUM-page_type", "invalid_enum:page_type"),
         ]
         for cid, want in cases:
             self.assertEqual(check_key.derive_key({"id": cid}), want, cid)

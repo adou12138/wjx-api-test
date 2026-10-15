@@ -57,6 +57,7 @@ _MECH_PREFIXES = (
     ("B-TYPE-", "wrong_type"),
     ("B-OVER-", "over_validation"),
     ("B-NULL-", "null_value"),
+    ("B-ENUM-", "invalid_enum"),
 )
 
 # B-OVER-{field}-{state} 的状态后缀，解析字段名时要剥掉
