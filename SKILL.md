@@ -1,8 +1,8 @@
 ---
 name: "wjx-api-test"
-version: "4.30.1"
+version: "4.31.0"
 agent_created: true
-description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 30 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。AF 业务场景 prompt 自动注入 L5 产品知识（检索失败自动降级为纯契约，不影响主流程）；配套接口解析在同级扫描落空时从 L5 知识库捞候选（只进清单不自动填，供人工 --read-action 指定）。含 30 类维度框架、高频缺陷模式清单、18 条实测陷阱。`--profile discovery` 发现档把探测广度限额（超长上限 / 安全载荷条数 / 字段族配额 / AF 条数）集中到一处开关，用于"尽量多发现问题"；**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
+description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 31 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。AF 业务场景 prompt 自动注入 L5 产品知识（检索失败自动降级为纯契约，不影响主流程）；配套接口解析在同级扫描落空时从 L5 知识库捞候选（只进清单不自动填，供人工 --read-action 指定）。含 31 类维度框架、高频缺陷模式清单、18 条实测陷阱。`--profile discovery` 发现档把探测广度限额（超长上限 / 安全载荷条数 / 字段族配额 / AF 条数）集中到一处开关，用于"尽量多发现问题"；**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
 ---
 
 # wjx-api-test — 接口测试工作流
@@ -105,7 +105,7 @@ WJX_BASE_URL=https://实际地址/实际路径 python scripts/api_test_runner.py
 对"输入给错/漏了"已有启动级硬拦截（缺参数 / 路径不存在 / 适配层缺函数 / 占位符未解析一律报错退出）。在此之上，针对"做少了却静默产出完整报告""输入自相矛盾"内置四道运行期门禁：
 
 1. **配置矛盾拦截**（`personal_config.config_consistency_check()`，深度与冒烟共用，启动阶段）——region 矛盾、设了 `WJX_CROSS_ENV` 但跨环境配置为空 → **fatal，exit(2)**；域名 vs region 启发式（如 `region=intl` 却用国内域名）→ **warn**（`WJX_STRICT_CONSISTENCY=1` 升级为拦截）。
-2. **覆盖率门禁（反静默缺漏）**（`api_test_runner.coverage_gate()`，收尾阶段）——应测维度由 `applicability.py` 自动推导（不再依赖人手声明）；**只有 `PASS`/`FAIL`/`PRECONDITION_UNMET` 才算"执行过"**（`PRECONDITION_UNMET` 确实发了请求拿到响应，只是结论既非通过也非失败；不计入会让"跑过但被前置挡住"的维度被误报成覆盖率缺口），`SKIPPED`/`N/A` 不计入已覆盖，杜绝"把没测当成测了"；缺口记 `COV-*`【缺陷(覆盖率缺口)】进台账并高亮，**逐条与维度两级产生**——已生成却未执行的用例在跳过前先记一条（`case_runner._skip_uncovered()`），收尾门禁再兜底整维度缺失，两级不可互相替代；`WJX_STRICT_COVERAGE=1` 升级为 exit(2)；**只锁必测**，选测放 `optional_plan` 不进硬门禁（防假警报）。
+2. **覆盖率门禁（反静默缺漏）**（`api_test_runner.coverage_gate()`，收尾阶段）——应测维度由 `applicability.py` 自动推导——**该自动推导只在「生成用例 → `case_runner`」链路成立**（`case_runner.py` 读用例文件里的 `coverage_plan`）；**七步深度流程里自写用例跑 `api_test_runner.py` 时需自行声明 `COVERAGE_PLAN`**，该路径未引入 `applicability`，未声明则门禁打印跳过并返回；**只有 `PASS`/`FAIL`/`PRECONDITION_UNMET` 才算"执行过"**（`PRECONDITION_UNMET` 确实发了请求拿到响应，只是结论既非通过也非失败；不计入会让"跑过但被前置挡住"的维度被误报成覆盖率缺口），`SKIPPED`/`N/A` 不计入已覆盖，杜绝"把没测当成测了"；缺口记 `COV-*`【缺陷(覆盖率缺口)】进台账并高亮，**逐条与维度两级产生**——已生成却未执行的用例在跳过前先记一条（`case_runner._skip_uncovered()`），收尾门禁再兜底整维度缺失，两级不可互相替代；`WJX_STRICT_COVERAGE=1` 升级为 exit(2)；**只锁必测**，选测放 `optional_plan` 不进硬门禁（防假警报）。
 
 选测维度本轮零用例时，产物 `uncovered_optional_detail` 逐条给出原因，不只是维度字母：
 
@@ -126,7 +126,7 @@ WJX_BASE_URL=https://实际地址/实际路径 python scripts/api_test_runner.py
 
    两条硬边界：① **来源型不进对账分母**——语义/人工用例不兑现字段约束，塞进分母会让门禁永远不可能通过，进而被人关掉；② **只出声、不进缺陷台账**——缺的是测试设计完整性而非接口缺陷，且单接口可达上百条（实测某接口 108 条），进台账会淹没真缺陷，完整清单留在产物 `check_key.missing` 供审计。
 
-4. **浅用例 / 空转检测**（反"报告看似完整但覆盖浅"）——仅断言 `result=true` 且无契约/增强断言的 PASS → 记低危观察并在汇总告警（`shallow_passes`）；`assert_non_empty()` 包裹自定义断言循环，集合为空导致循环 0 次恒 PASS 会被判无效（陷阱 17，`check_enum_exhaustive()` 已内建）；冒烟空案例 → 告警，`WJX_STRICT_COVERAGE=1` 时 exit(2)。
+4. **浅用例 / 空转检测**（反"报告看似完整但覆盖浅"）——仅断言 `result=true` 且无契约/增强断言的 PASS → 记低危观察并在汇总告警（`shallow_passes`）；`assert_non_empty()` 包裹自定义断言循环，集合为空导致循环 0 次恒 PASS 会被判无效（陷阱 17，`check_enum_exhaustive()` 已内建）；冒烟侧当前**没有**案例级「空案例」告警，也不响应 `WJX_STRICT_COVERAGE=`（`smoke_runner.py` 无此环境变量分支，其 `empty` 统计是响应**空值字段**而非案例级）；升级拦截仅覆盖深度流程；
 
 > 设计原则：对"skill 自身输入错误"用硬拦截；对"做少了 / 静默漏测 / 输入自相矛盾"用门禁把风险从"靠人记"变成"靠代码卡"。默认温和（告警 + 记缺陷），仅在显式设 `WJX_STRICT_*` 时升级为 exit(2)。
 
@@ -170,10 +170,10 @@ python scripts/artifact_readback.py --dir . --json readback.json   # 供门禁�
 
 ## 契约驱动的自动生成（推荐入口 · 解决"做少了"）
 
-本 skill 的知识（30 维度框架 / 19 条缺陷模式 / 适用性矩阵 / 断言 helper）原本只是**文档**，每次靠人"读文档 → 设计用例 → 手写 Python"，覆盖率取决于当次注意力——这是"做少了却静默产出完整报告"的结构性根源。现把这些知识变成**可执行规则**：
+本 skill 的知识（31 维度框架 / 19 条缺陷模式清单 / 适用性矩阵 / 断言 helper）原本只是**文档**，每次靠人"读文档 → 设计用例 → 手写 Python"，覆盖率取决于当次注意力——这是"做少了却静默产出完整报告"的结构性根源。现把这些知识变成**可执行规则**：
 
 ```
-契约 → 字段语义推断 → 适用性自动判定 → 19 条缺陷模式匹配 → 字段级变异 + 安全载荷清单 → 声明式用例 → 执行 + 覆盖率门禁
+契约 → 字段语义推断 → 适用性自动判定 → 19 条缺陷模式清单匹配（`pattern_engine.PATTERNS` 另含 UI1 与 AA 两条，共 21 条，不在清单内） → 字段级变异 + 安全载荷清单 → 声明式用例 → 执行 + 覆盖率门禁
 ```
 
 **安全载荷清单**（G 维度）：`assets/security_payloads.json` 按字段语义标签/类型挑选载荷类别（SQL 注入 / XSS / 路径穿越 / 命令注入 / CRLF / **内容安全：广告导流 / 违法违规 / 辱骂 / 色情低俗**），每类每字段限量生成，断言方向为「应被拦截」——被原样接受即缺陷，被正确拦截记「符合预期」（陷阱3）。内容安全类目的 `payloads[0]` 为字面样本、`payloads[1]` 为同句**变体绕过**样本（符号穿插 / 空格分隔 / 全角 / 拼音混写）——字面拦得住、变体漏拦即真实缺口；类目可自行扩展，`applies_to` 写对即自动生效（生成器按 `applies_to` 匹配，无需改代码）；涉政敏感类不内置样本，需从团队/监管词库接入。
@@ -430,6 +430,21 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 - **ENV 台账 / 多环境差异对比不是默认必做步骤**，仅在 ① 用户明确要求，或 ② 过程中确实观察到与"指定环境"有关的环境性差异（如某环境 404 / 权限不足而指定环境正常、限流文案）时才做。
 - 不要为了"显得覆盖完整"主动多环境探活——那会把部署/授权差异误判为接口缺陷。若真出现，按陷阱 5 记 ENV 台账，但它是**可选**产物、不是交付门槛。
 
+## 执行前的确认检查点
+
+门禁管的是「做少了 / 做错了会被代码拦住」，检查点管的是「**不该由 agent 自行推定的决策**」。以下每一项都必须用 `AskUserQuestion` 取得**本次**明确选择后才可继续，**不得沿用上一次运行或历史对话里的选择**：
+
+| 决策点 | 何时必问 | 不确认就执行的后果 |
+|---|---|---|
+| **目标环境** | 每次测试开始前；默认只在用户指定的**那一个**环境执行 | 误测生产环境；把部署/授权差异判成接口缺陷 |
+| **写操作授权** | 用例涉及创建 / 修改 / 删除 / 状态变更时 | 污染真实数据；删除类不可逆（`smoke_runner` 删除类默认不执行） |
+| **发现档 discovery** | 用户说「尽量多发现问题」但没明说放宽广度时 | 用例数与写接口落数据量倍增，对被测服务造成压力 |
+| **AF 业务场景启用** | 默认关闭，启用前 | 业务场景每条都可能真实发请求，写接口会落数据 |
+| **数据清理授权** | 执行 `teardown` / 清理残留前 | 误删非本次创建的资源（清理纪律见第 6 步） |
+| **跨环境对比** | 非默认步骤，仅用户明确要求时才做 | 多环境探活把环境差异误判为接口缺陷 |
+
+运行实证依赖另有一道独立闸门：`precondition_scan` 产出的候选依赖**只有 `--confirm` 转为 `confirmed` 后才参与前置判定**。原因是命中后用例状态改为 `PRECONDITION_UNMET`、**会从缺陷台账里消失**——判错等于静默吞掉一个真缺陷，且外观完全合理，所以候选一律不生效。
+
 ## 工作流程（七步落地）
 
 ### 第 0 步：登记当前指定的环境
@@ -446,7 +461,7 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 
 ### 第 1 步（审查模式变体）：接口文档合理性审查
 
-> 当用户意图是「审查 / 校验接口文档是否合理」而非「执行接口测试」时，**进入文档审查模式：不发起真实调用，只审文档原文**。结论复用 30 维度框架与统一台账，并与后续测试衔接。
+> 当用户意图是「审查 / 校验接口文档是否合理」而非「执行接口测试」时，**进入文档审查模式：不发起真实调用，只审文档原文**。结论复用 31 维度框架，问题记入文档审查台账（9 列，见 `references/doc_review.md`，与执行侧统一 16 列台账不同源），并与后续测试衔接。
 
 审查六个面：① **字段参数说明**（请求+响应逐字段：名称 K7 / 类型 B,K / 必填 B1 / 取值范围 B2,B3 / 默认值 B9 / 单位 K / 示例 K9,B 是否齐备准确）；② **前后一致性**（请求↔响应字段名、多处描述、跨接口命名风格 K7、向前兼容 L2）；③ **错误码与错误信息**（完整性、码↔文案映射 H9、HTTP 状态码与业务码区分、根因不掩盖 H6、未声明码）；④ **边界条件**（空值/超长/越界/特殊字符、分页 AA、并发、时间边界）；⑤ **字段间依赖关系**（条件必填、互斥、联动、组合约束——未说明即记「依赖关系缺失」，高优先级）；⑥ **歧义/缺失/不合理**（模糊措辞、空白项、示例与说明冲突）。
 
@@ -459,10 +474,10 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 >
 > **易漏提醒**：**AB（前端-接口口径一致性）不体现在操作类型里**——只要接口在前端有对应操作就必须测，纯接口视角测不出前后端不一致（历史缺陷占比约 8.4%，第二高发）。测 AB 前先拿**页面基线**（人工页面操作 / 浏览器自动化抓取 / 设计稿三选一），无基线的 AB 项只能记缺口，**不得凭空填预期值**。
 
-### 第 2 步：按 30 维度设计覆盖（A–L 通用 + M–Z 业务域专项 + AA–AD 通用补充）
-加载 `references/framework.md`，把接口套入 30 大类，逐类判定覆盖状态（强/部分/缺口/排除/**N/A**），用 §4 覆盖率矩阵记录。
+### 第 2 步：按 31 维度设计覆盖（A–L 通用 + M–Z 业务域专项 + AA–AE 通用补充）
+加载 `references/framework.md`，把接口套入 31 大类，逐类判定覆盖状态（强/部分/缺口/排除/**N/A**），用 §4 覆盖率矩阵记录。
 
-- **M–Z 专项**只在接口属于对应业务域时测（第 1.5 步判断）；**AA–AD 补充**按接口形态判定：AA 分页（列表接口必测）、AB 前端口径（有页面的接口必测）、AC 幂等唯一性（写接口必测）、AD 事件回调（触发事件的接口必测）；**国际版维度默认全部标 N/A**。
+- **M–Z 专项**只在接口属于对应业务域时测（第 1.5 步判断）；**AA–AE 补充**按接口形态判定：AA 分页（列表接口必测）、AB 前端口径（有页面的接口必测）、AC 幂等唯一性（写接口必测）、AD 事件回调（触发事件的接口必测）、**AE 认证/传输补充（认证生命周期、请求头与传输契约、mTLS、重放时间窗；`applicability.py` 六种操作类型的必测元组均含 AE，不适用时的默认理由见其 `NA_REASON["AE"]`）**；**国际版维度默认全部标 N/A**。AF 为业务场景维度族，默认关闭、启用后必测（见下文「业务场景补充」一节），不计入上述 31 类。
 - **优先补齐"假通过"与"假失败"两类盲区**：C 字段语义真值（更新后回读）、E 状态机、H 错误语义具体性（含 H6 根因不掩盖）、G 安全（含内容安全）、**B8 过度校验（合法输入被误拒）**。
 - 用例用 §3 三要素模板描述（输入要点 / 观测点 / 预期行为 / 优先级 / 依赖环境 / 可自动化）。
 
@@ -476,7 +491,7 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 - **过度校验也要断言**：文档标注为可选/可空的字段，传 `null`/空串/不传 → **应成功**，被拒即记缺陷。最高发触发点是"**读接口返回的结构直接回写给写接口**"。用 `assert_no_over_validation()`，见陷阱 14。
 - 连接/网络异常自动重试（次数由 `RETRY_COUNT` 控制），重试后仍失败归 **ENV/网络问题**，不计入业务缺陷。
 - **调用其他接口辅助验证**（核心能力）：创建/修改/删除/状态变更后，调独立查询/列表/统计接口交叉验证（矩阵见 §9.4.2）——创建后验详情字段一致 + 列表出现 + 计数 +1；修改后验字段生效且未传字段保留原值；删除后验详情不存在 + 列表消失 + 计数 -1；状态变更后验详情状态字段 + 公开访问接口生效；导出后验下载链接可访问；批量操作后验成功项生效、失败项不变。三层次：存在性 → 字段一致性 → 副作用完整性，**至少做到第 2 层**；辅助接口失败先归因（环境/同步延迟/权限/真实缺陷，见 §9.4.4），不直接判主接口缺陷。helper：`verify_by_query()` / `verify_by_list()` / `verify_absent()` / `verify_count_delta()` / `chain_verify()`。
-- **按维度选用断言 helper**（`framework.md` §2 场景族末尾标注）：AA `check_pagination()`、AB `check_ui_parity()`（`page_value` 来自页面基线登记表，禁止凭空填）、AC `check_uniqueness()`、AD `check_event_delivery()`、H9 `check_error_code_mapping()`、命名 `check_field_naming()`、国际化 `check_error_i18n()`/`check_currency()`/`check_datetime_tz()`（后两者仅国际版）、HTTP 语义 `check_http_semantics()`。**适用维度必选对应 helper**。
+- **按维度选用断言 helper**（`framework.md` §2 场景族末尾标注）：AA `check_pagination()`、AB `check_ui_parity()`（`page_value` 来自页面基线登记表，禁止凭空填）、AC `check_uniqueness()`、AD `check_event_delivery()`、**AE `check_transport_contract()`（请求头与传输契约、认证生命周期；AE 为全操作类型必测，不得因文档未写而跳过）**、H9 `check_error_code_mapping()`、命名 `check_field_naming()`、国际化 `check_error_i18n()`/`check_currency()`/`check_datetime_tz()`（后两者仅国际版）、HTTP 语义 `check_http_semantics()`。**适用维度必选对应 helper**。
 
 ### 第 4 步：问题记录（CSV，现象化）
 按 `references/issue_format.md` 的**统一 16 列**记录（基础 9 列 + 证据链 7 列：置信度 / HTTP状态码 / 请求ID / TraceID / 证据路径 / 归因 / 复测状态）。**维度列填触发该问题的维度编号**（如 `B8`/`AA3`/`H9`），便于按维度统计缺陷产出、反哺高频模式清单。描述用**现象口吻**（"写了脚本也能保存"而非"未做 XSS 过滤"）。安全拦截类记「符合预期」，二者都**不是缺陷**；仅在确实做了多环境对比且观察到差异时，才记「环境风险(ENV)」。runner 自动导出 `api_test_issues.csv`（utf-8-sig 逗号分隔，Excel 不空白）。
@@ -528,7 +543,7 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 
 ## 资源与能力索引
 
-**方法论与规范**（`references/`）：`framework.md`（30 维度 + §9 断言/验证矩阵 + §11 数据管理）· `applicability_matrix.md` · `defect_patterns.md` · `doc_review.md` · `smoke_testing.md` · `ui_baseline.md` · `env_config.md` · `issue_format.md` · `case_schema.md` · `auto_generation.md` · `personal_config.md` · `intelligence_policy.md` · `attribution_rules.md` · `adapter_contract.md` · `real_smoke_delivery.md` · `pattern_candidates.md` · `traps.md`
+**方法论与规范**（`references/`）：`framework.md`（31 维度：A–L + M–Z + AA–AE，+ §9 断言/验证矩阵 + §11 数据管理）· `applicability_matrix.md` · `defect_patterns.md` · `doc_review.md` · `smoke_testing.md` · `ui_baseline.md` · `env_config.md` · `issue_format.md` · `case_schema.md` · `auto_generation.md` · `personal_config.md` · `intelligence_policy.md` · `attribution_rules.md` · `adapter_contract.md` · `real_smoke_delivery.md` · `pattern_candidates.md` · `case-coverage.md`（用例执行率对账：rate 严格 / looseTotal 宽松双口径） · `traps.md`
 
 **执行资产**（`scripts/`、`adapters/`）：入口 `flow.py` · `api_test_runner.py`（运行器模板，渲染 `FINDING_CSV_COLS` 台账行）· `smoke_runner.py` · `case_runner.py` · `kb_load_contract.py` · `personal_config.py` · `discovery_profile.py`（发现档：集中管理探测广度限额，一处开关）；生成链 `contract_parser.py`（ShowDoc/OpenAPI 3.x/Swagger 2.0，JSON+YAML，$ref 与嵌套递归展开）· `contract_model.py` · `field_semantics.py` · `applicability.py` · `pattern_engine.py` · `case_generator.py` · `business_scenarios.py`（AF 业务场景补充生成 + 六项门禁 + prompt 自动注入 L5 产品知识）· `companion_scan.py`（配套接口解析：越权读面 / 真往返 / 列表与计数交叉验证的入口；同级扫描落空时从 L5 知识库捞候选，只进清单不自动填）· `dim_generators.py`（零产出维度补齐：编码国际化 / 组合交叉 / 请求追踪 / 批量 / 导出下载 / 按字段特征触发的业务域专项）· `llm_semantics.py`（语义层接入：大模型读契约产出事实、机械校验后并入，可选且不传时零影响）· `llm_fact_cases.py`（语义层兑付：把并入的事实转成用例，没并入就一条不产）；闭环 `assertion_engine.py` · `attribution_engine.py` · `artifact_readback.py`（产物回读校验：写盘后读回验编码/表头/列宽/编号/行数/证据链列）· `evidence_bundle.py` · `minimizer.py` · `regression.py` · `asset_registry.py` · `relationship_inference.py` · `risk_engine.py` · `plan_builder.py` · `report_enhance.py` · `pattern_feedback.py` · `bug_pattern_pool.py`（缺陷模式池：`--merge` 把历轮 `report_full.json` 的缺陷按指纹累积、跨轮计 hits，`--rank` 出风险 Top、`--list` 汇总；**只累积与排序，不自动生成用例**——从一个历史缺陷推断不出修复后的正确行为，自动生成会产生错误断言或与既有生成器重复）· `ui_baseline.py`；适配器 `adapters/base.py` · `adapters/rest.py` · `adapters/sojump.py`（公共参数、鉴权、写操作门禁）· `adapters/graphql.py`（HTTP 200+errors 判失败，反假通过）· `adapters/grpc.py`（懒加载 grpcio，缺依赖实例化即报错）；结构约束 `schemas/contract_model.schema.json` · `schemas/test_plan.schema.json` · `schemas/execution_result.schema.json` · `schemas/finding.schema.json` · `schemas/regression_baseline.schema.json`
 
