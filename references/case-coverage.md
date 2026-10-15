@@ -1,4 +1,4 @@
-# 用例执行率闭环：计划 vs 实际（v4.33.0）
+# 用例执行率闭环：计划 vs 实际（v4.33.1）
 
 ## 为什么需要
 
@@ -86,5 +86,5 @@ python scripts/case_coverage.py --plan ... --results ... \
 ## 相关文档
 
 - 门禁总览与档位：`intelligence_policy.md`
-- 覆盖率门禁（既有，维度级）：`coverage-gates.md` / `SKILL.md` 收尾门禁段
+- 覆盖率门禁（既有，维度级）：`SKILL.md`「四道运行期门禁」第 2 条 / `framework.md` §4 覆盖率矩阵
 - 产物形状：`schemas/case-coverage.schema.json`

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用例执行率闭环契约测试（wjx-api-test v4.33.0）。
+"""用例执行率闭环契约测试（wjx-api-test v4.33.1）。
 
 注意：既有 `coverage_gate()` **已经**按 EXECUTED_STATUSES 过滤（只有 PASS/FAIL/PRECONDITION_UNMET 算触及，
 全被跳过的维度会记「假覆盖」缺陷）。本模块测的是它的增量部分：逐条对账、reason 必填、
