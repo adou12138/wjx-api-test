@@ -1,6 +1,6 @@
 ---
 name: "wjx-api-test"
-version: "4.31.0"
+version: "4.32.0"
 agent_created: true
 description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 31 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。AF 业务场景 prompt 自动注入 L5 产品知识（检索失败自动降级为纯契约，不影响主流程）；配套接口解析在同级扫描落空时从 L5 知识库捞候选（只进清单不自动填，供人工 --read-action 指定）。含 31 类维度框架、高频缺陷模式清单、18 条实测陷阱。`--profile discovery` 发现档把探测广度限额（超长上限 / 安全载荷条数 / 字段族配额 / AF 条数）集中到一处开关，用于"尽量多发现问题"；**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
 ---
@@ -10,12 +10,14 @@ description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测�
 把一次接口测试从"零散调接口"变成"有设计、有断言、有问题台账"的规范化过程。
 **执行顺序铁律：先判适用性，再做维度覆盖；先做断言分层，再做结果判定；先看契约与状态，再看业务结果。**
 
-| 路径 | 什么时候走 | 入口 |
-|---|---|---|
-| **契约驱动自动生成**（推荐） | 有契约文档，目标"尽量多发现问题" | `scripts/flow.py`：生成 → 执行 → 增强报告 |
-| **七步深度流程** | 人工设计用例、深挖单个接口 | 下方「工作流程」+ `scripts/api_test_runner.py` |
-| **冒烟（批量探活）** | "把一批/全部接口跑一遍看哪些通" | `scripts/smoke_runner.py` |
-| **文档合理性审查** | 意图是"审文档"，不是"执行测试" | 不发请求，按 `references/doc_review.md` 核验 |
+| 路径 | 用户典型说法 | 入口命令 | 主要产出 |
+|---|---|---|---|
+| **契约驱动自动生成**（推荐） | 「按这份契约测一下这个接口」「尽量多发现问题」 | `scripts/flow.py --contract <路径> --execute`（要"多发现"加 `--profile discovery`） | `generated_cases.json` + `api_test_report_full.json` + `api_test_issues.csv` + `plan.md` |
+| **七步深度流程** | 「深挖这个接口」「按维度设计用例」 | 见下方「工作流程」+ `scripts/api_test_runner.py` | 自写用例 + 统一 16 列问题台账 |
+| **冒烟（批量探活）** | 「把这些接口全跑一遍看哪些通」 | `scripts/smoke_runner.py --config <cfg> --cases <cases> --out-dir reports` | 结果 CSV（PASS/FAIL/N/A/ERROR）+ 问题 CSV + `smoke_summary.md` |
+| **文档合理性审查** | 「审一下这份接口文档」「参数说明 / 错误码写得合理吗」 | **不发任何请求**，按 `references/doc_review.md` 核验 | `api_test_doc_review_report.md` + 9 列 `api_test_doc_issues.csv` |
+
+> **两条路由歧义必须先判清**：① 「审文档」≠「执行测试」——前者**全程不发请求**，判错会把一次静态审查变成一轮真实调用；② 「一批接口跑一遍」走冒烟（广度优先），**不是**对每个接口套七步深度流程（深度优先），两者不互相替代。
 
 > **适用范围**：本 skill **不绑定任何具体接口**，文档里的 Sojump / 1000107 / 1000108 仅是**示例**。测任何接口只需换三样：① 契约（知识库/文档载入）、② 环境配置（`references/env_config.md` 登记）、③ 用例里的 action 与参数——框架、维度、断言方法、台账格式**完全复用**。
 
@@ -58,7 +60,10 @@ python scripts/precondition_scan.py --markdown --store runtime_dependencies.json
 python scripts/case_runner.py --cases cases.json --dry-run         # 声明式用例执行器
 python scripts/case_runner.py --cases cases.json --only B,H
 
-# 用例执行率对账：计划 vs 实际（只有 PASS/FAIL 算真判定；SKIPPED/N-A 单列且原因必填）
+# 用例执行率对账：计划 vs 实际
+#   rate = 严格真判定（只数 PASS/FAIL）；looseTotal = 宽松口径（任一 result 即计，含 SKIPPED/N/A）
+#   口径提醒：这两个数都与 coverage_gate 的「触及」口径不同（后者认 PASS/FAIL/PRECONDITION_UNMET），
+#   三者不可混用；差额由 skippedOnlyDimensions 点名——见 references/case-coverage.md
 python scripts/case_coverage.py --plan cases.json --results <产物>/api_test_report_full.json --out case_coverage.json
 python scripts/case_coverage.py --plan cases.json --results <产物>/api_test_report_full.json \
     --expect-categories AF --exempt-categories "AF:本轮未启用大模型链路" --min-rate 0.8 --enforce
