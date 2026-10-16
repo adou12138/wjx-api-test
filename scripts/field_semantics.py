@@ -23,10 +23,12 @@ import re
 RULES = [
     ("time", r"(^|_)(time|timestamp|date|datetime|at)$|_time$|_at$|时间|日期", r"时间|日期|时间戳|时区"),
     ("tz", r"timezone|tz$|时区", r"时区|utc|gmt"),
-    ("url", r"url|link|path$|uri|domain|href|地址", r"链接|地址|可访问|域名"),
+    # 【W48 词边界收紧】url/link/href 加 (^|_)…($|[^a-z0-9_]) 边界：username 不再命中
+    # name、surl 不再命中 url；排除表挡「链接编号」类伪 URL。
+    ("url", r"(^|_)(url|uri|href|domain)(s)?($|[^a-z0-9_])|link$|地址", r"链接|地址|可访问|域名"),
     # 以下三个是对 url 的「收紧」：命中后由 _OVERRIDES 把泛化的 url 摘掉。
     # 起因：sid 备注「短链接编号」被 url 的「链接」命中，导致拿编号去验 URL 可达性（假缺陷）。
-    ("code", r"(^|_)(sid|shortid|short_id|shortlink|short_link|shorturl|code|token)$|_code$|_token$",
+    ("code", r"(^|_)(sid|shortid|short_id|shortlink|short_link|shorturl|short_url|code|token)$|_code$|_token$",
      r"编号|短链接|短码"),
     ("relative_url", r"(^|_)(path|uri|url_path|relative_path)$", r"相对路径|相对地址|需拼接"),
     ("domain", r"(^|_)(domain|host)$", r"域名|主机地址"),
@@ -34,18 +36,30 @@ RULES = [
     ("status", r"status|state|状态", r"状态"),
     ("enum", r"type$|kind$|category$|level$|枚举", r"枚举|取值|类型"),
     # 注意边界：page_type 是「类型枚举」不是翻页参数，故必须整段/整词匹配，不能只含 page
-    ("page", r"(^|_)(page|page_index|page_no|pageno|offset|cursor|page_token|next_cursor|nextcursor)$", r"页码|分页|游标"),
+    # 【W48】page_num/page_number 是翻页参数（页码），加入翻页族
+    ("page", r"(^|_)(page|page_index|page_no|pageno|page_num|pagenum|page_number|offset|cursor|page_token|next_cursor|nextcursor)$", r"页码|分页|游标"),
     ("size", r"(^|_)(size|page_size|pagesize|limit|per_page|perpage)$", r"每页|条数"),
     ("amount", r"amount|price|fee|money|balance|金额|价格", r"金额|价格|币种|精度"),
     ("currency", r"currency|币种", r"币种|汇率"),
     ("html", r"html|content|template|正文|内容", r"html|内容|正文"),
-    ("count", r"^total$|count|num$|quantity|数量|总数", r"总数|数量|条数"),
+    # 【W48】count/num 收紧：page_num 是「页码」不是计数（num$ 的词边界排它）；
+    # total 单独词匹配
+    ("count", r"(^|_)(total|count|quantity)$|_count$|数量|总数", r"总数|数量|条数"),
     ("i18n", r"language|locale|lang|i18n|语言", r"多语言|国际化|语言"),
     ("bool", r"^(is|has|enable|disable|allow)_|publish$|flag$|开关", r"是否|布尔"),
-    ("name", r"name|title|标题|名称", r"标题|名称"),
+    # 【W48】name/title 词边界：(_name / name$ / title$ / title 前缀) 命中；
+    # username/nickname 等常用名称词显式保留（语义确是名称）；filename/codename
+    # 这类无下划线复合词不再误判为「名称展示字段」。
+    ("name", r"(^|_)(name|title)(s)?$|_name$|_title$|(^|_)title|user_?name|nick_?name|标题|名称", r"标题|名称"),
     ("mobile", r"(^|_)(mobile|phone|tel|telephone)$", r"手机|电话"),
-    ("email", r"email|mail", r"邮箱|邮件"),
+    ("email", r"(^|_)email(s)?$|_email$|(^|_)mail$|邮箱|邮件", r"邮箱|邮件"),
 ]
+
+# 【W48 排除表】字段名包含这些词时，即使正则命中也摘掉对应标签（伪 URL/伪计数）。
+SEMANTIC_EXCLUDES = {
+    "url": ("链接编号", "短链接", "链接id", "linkid", "link_id"),
+    "count": ("page_num", "page_num", "pagenum"),
+}
 
 # 具体标签压掉泛化标签。左侧更具体，右侧被摘除。
 # 为什么必须摘：不摘的话「短链接编号」同时是 code 和 url，下游会拿编号去验可达性，
@@ -88,6 +102,10 @@ def infer(field):
     tags = []
     for tag, nre, tre in RULES:
         if re.search(nre, name) or re.search(tre, text):
+            # 【W48 排除表】字段名/说明含排除词时摘掉该标签（伪 URL/伪计数）
+            excludes = SEMANTIC_EXCLUDES.get(tag, ())
+            if any(x in name or x in text.lower() for x in excludes):
+                continue
             tags.append(tag)
     if field.get("enum"):
         if "enum" not in tags:
@@ -201,6 +219,11 @@ def pick_by_family(fields, n):
     直接取前 N 的问题：排在前面的族往往字段形态相近（比如一排 id），
     砍掉的是排在后面的整个族——族内共享校验分支，砍掉一族等于一类分支零覆盖。
     族按规模降序拿代表：砍掉大族的损失比砍掉单字段族大。
+
+    【W28 退化可审计】字段无 stem/语义标签时 field_family 返回 "name:<字段名>"
+    （每字段自成一族），"每族一个代表"退化成"按原序取前 N"——docstring 声称要
+    避免的行为。改为：检测到退化（name: 族占比过高）时向 stderr 告警并返回
+    被砍字段清单（调用方在报告留痕），让"谁被静默砍掉"可审计。
     """
     fields = list(fields)
     if len(fields) <= n:
@@ -218,4 +241,14 @@ def pick_by_family(fields, n):
         if len(picked) >= n:
             break
         picked.add(i)
+    dropped = [fields[i] for i in sorted(set(range(len(fields))) - picked)]
+    # 【W28】退化检测：name: 族（无任何语义线索）超过半数且确有丢弃 → 告警
+    name_fam_count = sum(1 for k in fams if k.startswith("name:"))
+    if name_fam_count >= max(1, len(fams) // 2) and dropped:
+        import sys as _sys
+        _sys.stderr.write(
+            "[field_semantics] pick_by_family 退化：%d/%d 个字段无语义标签（name: 自成一族），"
+            "限额 %d 退化为按位置取前 N；被砍字段：%s（请人工确认或补语义标签）\n"
+            % (name_fam_count, len(fams), n,
+               ",".join(str(d.get("name")) for d in dropped[:10])))
     return [fields[i] for i in sorted(picked)]

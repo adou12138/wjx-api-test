@@ -62,7 +62,12 @@ class GrpcAdapter(ApiAdapter):
         code = getattr(response, "status_code", 0)
         if code == 0:
             return {"status": "ok"}
-        if code in (4, 8):          # DEADLINE_EXCEEDED / RESOURCE_EXHAUSTED
+        if code == 4:
+            # 【W37】DEADLINE_EXCEEDED 是超时不是限流——旧版与 RESOURCE_EXHAUSTED
+            # 一起归 rate_limited，会被「节流重试」逻辑吃掉，掩盖真实延迟缺陷。
+            return {"status": "timeout", "grpc_code": 4,
+                    "message": "DEADLINE_EXCEEDED（超时，应查延迟而非节流重试）"}
+        if code == 8:               # RESOURCE_EXHAUSTED
             return {"status": "rate_limited"}
         if code in (3, 5, 7, 9, 16):  # INVALID_ARGUMENT/NOT_FOUND/PERMISSION_DENIED/FAILED_PRECONDITION/UNAUTHENTICATED
             return {"status": "client_error"}

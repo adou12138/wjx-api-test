@@ -947,6 +947,9 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
     contract = annotate(load_contract(contract_path, action=action))
     app = judge(contract)
     base = pattern_engine.base_params(contract)
+    # 【W31 配套】_needs_manual_baseline 是元信息标记，不是请求参数——剥离并
+    # 升到产物顶层，让「这些字段的基线是猜的」在报告可见。
+    needs_manual = base.pop("_needs_manual_baseline", [])
 
     raw = ""
     try:
@@ -1068,6 +1071,7 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
         "matched_patterns": matched,
         "field_suggestions": suggest_for_contract(contract),
         "base_params": base,
+        "needs_manual_baseline": needs_manual,
         "read_action": ctx["read_action"],
         "list_action": ctx["list_action"],
         "read_params": ctx["read_params"],

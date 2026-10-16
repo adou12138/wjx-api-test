@@ -115,14 +115,34 @@ NA_REASON = {
 INTL_HINTS = ["国际版", "海外", "多语言", "国际化", "i18n", "language", "locale", "currency", "timezone"]
 
 
+def _word_hit(keyword, text):
+    """英文关键词按词边界匹配，中文仍用子串（W30）。
+
+    误命中实测：add→address、get→target/forget、new→renew——把「地址管理」判成
+    创建类、「获取目标」判成查询类，后续幂等/状态机用例整块错向。"""
+    if not keyword or not text:
+        return False
+    if re.match(r"^[a-z][a-z0-9_-]*$", keyword):
+        return re.search(r"(?:^|[^a-z0-9])%s(?:[^a-z0-9]|$)" % re.escape(keyword), text) is not None
+    return keyword in text
+
+
 def _detect_op_type(contract):
+    """操作类型识别。
+
+    【W30】英文关键词词边界匹配；全部未命中时**不再默认「查询」**——返回 None，
+    由调用方记「操作类型待确认」（创建/删除被误判查询会让幂等/状态机整块 N/A 漏测，
+    宁可待确认不可错向）。仅当接口名含明确的列表/分页信号时才保守判查询。"""
     name = (contract.get("name") or "") + " " + str(contract.get("action") or "")
     low = name.lower()
     for op, keys in OP_RULES:
         for k in keys:
-            if k in low:
+            if _word_hit(k, low):
                 return op
-    return "查询"
+    # 无命中：列表/分页强信号才判查询，否则待确认
+    if _is_list_query(contract):
+        return "查询"
+    return None
 
 
 def _is_list_query(contract):
@@ -171,6 +191,11 @@ def judge(contract, with_business=None):
     if with_business is None:
         with_business = os.environ.get("WJX_WITH_BUSINESS", "").strip().lower() not in ("", "0", "false", "no")
     op = _detect_op_type(contract)
+    # 【W30 配套】操作类型待确认：不默认查询（错向 = 幂等/状态机整块漏测），
+    # 用「查询」的保守基线做计划，但在 coverage_plan 留痕供人工复核。
+    op_unconfirmed = op is None
+    if op_unconfirmed:
+        op = "查询"
     intl = _detect_intl(contract)
     domains = _detect_domains(contract)
     required, optional = OP_MATRIX.get(op, OP_MATRIX["查询"])
@@ -188,10 +213,30 @@ def judge(contract, with_business=None):
         if "AA" in optional:
             optional.remove("AA")
 
+    # 【W30 配套】操作类型未确认时：幂等/终态（E 维）降为选测——在错误假设上
+    # 硬测状态机比漏测更糟（假 FAIL 淹没真缺陷）。
+    if op_unconfirmed and "E" in required:
+        required.remove("E")
+        if "E" not in optional:
+            optional.append("E")
+
     # 业务域专项命中：提升到选测（若本应不适用）
+    # 【W29 反门外】业务专项恰是「发现更多 bug」的高价值面，恒在门禁外=漏测只在
+    # uncovered_optional 点名（没人看）。**请求侧字段命中**的业务域维度提升为必测
+    # 入硬门禁——能构造请求验证，命中即应测；仅 response_side_only/no_feature 的
+    # 保持选测（无法构造请求，硬测只会刷假缺口）。
+    from dim_generators import _domain_dim_resolve
+    try:
+        _resolved = _domain_dim_resolve(contract)
+    except Exception:
+        _resolved = {}
     for d in domains:
         if d not in required and d not in optional and d in ALL_DIMS:
-            optional.append(d)
+            info = _resolved.get(d) or {}
+            if info.get("hit"):
+                required.append(d)
+            else:
+                optional.append(d)
 
     # 国际版：Z 提升为必测；否则明确标 N/A（非国际版）
     if intl:
@@ -241,8 +286,14 @@ def judge(contract, with_business=None):
     else:
         notes.append("默认按国内版处理：国际版维度统一标 N/A（非国际版），不计入覆盖率分母")
 
+    if op_unconfirmed:
+        notes.append("操作类型待确认：接口名未命中任何操作关键词（也不含列表信号），"
+                     "按「查询」保守基线出计划，E 维（终态/幂等）已降选测——"
+                     "请人工确认真实操作类型后重判，错向的幂等/状态机用例会成片假 FAIL")
+
     return {
         "op_type": op,
+        "op_unconfirmed": op_unconfirmed,
         "is_list_query": _is_list_query(contract) if op == "查询" else False,
         "business_domains": domains,
         "is_intl": intl,

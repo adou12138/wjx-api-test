@@ -72,10 +72,14 @@ BATCH_TOLERATE_REJECT = list(_REJECT_COMMON) + [
 
 
 def gen_encoding_cases(contract, base, action):
-    """I 维度：对每个字符串字段注入中文与 emoji，再对首个字段补全角与 RTL。
+    """I 维度：对每个字符串字段注入中文与 emoji；全角与 RTL 按**字段轮换**覆盖。
 
     分层为 probe——它是「字段 × 编码样本」遍历，探测的是编码处理链路是否存在，
     不代表业务场景被测过。
+    【W49 反漏测】全角/RTL 此前只测首个字符串字段——后端可能按字段分别做编码
+    处理（title 走净化、remark 不走），首字段全绿不代表其余字段。改为：全角与
+    RTL 两类样本按字段序轮换（字段 i 拿样本 [2 + i % 2]），其余字段的编码分支
+    也被触达；字段只有 1 个时行为与旧版一致。
     """
     out = []
     fs = _str_fields(contract)
@@ -91,16 +95,17 @@ def gen_encoding_cases(contract, base, action):
                            {"success": True, "tolerate_reject": ENC_TOLERATE_REJECT},
                            action=action, priority="P2", tier="probe",
                            source="generator:encoding", note=_ENC_NOTE))
-    first = fs[0]
-    for tag, val, desc in ENCODING_SAMPLES[2:]:
+    # 【W49】全角/RTL 轮换：字段 i 取样本 [2 + i % 2]
+    for i, f in enumerate(fs):
+        tag, val, desc = ENCODING_SAMPLES[2 + (i % (max(1, len(ENCODING_SAMPLES) - 2)))]
         p = dict(base)
-        p[first["name"]] = val
-        out.append(_mk("I-ENC-%s-%s" % (tag, first["name"]),
-                       "编码国际化：%s=%s（%s）" % (first["name"], val[:12], desc),
+        p[f["name"]] = val
+        out.append(_mk("I-ENC-%s-%s" % (tag, f["name"]),
+                       "编码国际化：%s=%s（%s，字段轮换 %d/%d）" % (f["name"], val[:12], desc, i + 1, len(fs)),
                        "I", "编码国际化", p,
                        {"success": True, "tolerate_reject": ENC_TOLERATE_REJECT},
                        action=action, priority="P2", tier="probe",
-                       source="generator:encoding", note=_ENC_NOTE))
+                       source="generator:encoding", note=_ENC_NOTE + "；全角/RTL 按字段轮换覆盖（W49）"))
     return out
 
 
@@ -264,6 +269,8 @@ ROLE_DIM_MAP = {
 # 于是能力缺口被永久记成「本接口无需测」。
 REASON_NO_FEATURE = "no_feature"
 REASON_RESPONSE_SIDE_ONLY = "response_side_only"
+# 【W50】接口名命中但请求侧无字段：与 response_side_only 区分，误导归因会带偏排查方向
+REASON_NAME_HIT_ONLY = "name_hit_only"
 REASON_NOT_IMPLEMENTED = "not_implemented"
 
 REASON_TEXT = {
@@ -271,6 +278,8 @@ REASON_TEXT = {
     REASON_RESPONSE_SIDE_ONLY: "有特征，但字段仅在响应侧，无法构造请求",
     REASON_NOT_IMPLEMENTED: "该维度无生成器实现（能力缺口）",
 }
+REASON_TEXT["name_hit_only"] = ("接口名含该业务域关键词但请求侧无可传字段——本接口可能只是功能入口之一，"
+                                 "建议排查关联接口而非判「本接口无需测」")
 
 # run_all 能产出的维度全集。不在此集合的维度即使被判选测也注定零产出，点名时
 # 必须说明是能力缺口，否则会被误读成「本接口无需测」。
@@ -321,8 +330,22 @@ def _domain_dim_resolve(contract):
                 hit = f
                 break
         # token 命中了（响应侧字段名或接口名），但请求侧没有可传参的字段
-        res[dim] = ({"hit": hit, "via_role": False, "reason": None} if hit else
-                    {"hit": None, "via_role": False, "reason": REASON_RESPONSE_SIDE_ONLY})
+        # 【W50 反误导归因】零产出原因要区分命中源：接口名命中（name_hit）时
+        # 标 RESPONSE_SIDE_ONLY 是错的——接口名命中往往意味着「功能存在但本接口
+        # 只是其入口之一」，正确解释是 NAME_HIT_ONLY（建议查关联接口），误导归因
+        # 会让排查方向整个跑偏。
+        if hit:
+            res[dim] = {"hit": hit, "via_role": False, "reason": None}
+            continue
+        if any(t in (f.get("name") or "").lower()
+               for f in (contract.get("response_fields") or [])
+               for t in tokens):
+            reason = REASON_RESPONSE_SIDE_ONLY
+        elif any(t in iname for t in tokens):
+            reason = REASON_NAME_HIT_ONLY
+        else:
+            reason = REASON_RESPONSE_SIDE_ONLY
+        res[dim] = {"hit": None, "via_role": False, "reason": reason}
     return res
 
 

@@ -23,6 +23,12 @@ class RestAdapter(ApiAdapter):
         )
 
     def send(self, request):
+        if self.transport is None:
+            # 【W38】与 graphql/grpc 适配器对齐的防护：未注入 transport 时给明确
+            # 文案，而不是「NoneType object is not callable」让排障从零猜起。
+            raise TransportError(
+                "REST 适配器未注入 transport：构造时传 transport=可调用对象"
+                "（签名 transport(request)->response），或在 env 配置 transport 段")
         try:
             return self.transport(request)
         except Exception as exc:

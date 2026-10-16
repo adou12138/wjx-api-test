@@ -273,9 +273,18 @@ def run_pre(step: dict, cfg: dict, ctx: Ctx, call, dry: bool) -> None:
     for i in range(tries):
         _, parsed, _ = call(action, params, step.get("endpoint"))
         if isinstance(parsed, dict):
-            if (not retry) or get_path(parsed, retry.get("path") or "") is not None or not parsed.get("result"):
+            if retry and get_path(parsed, retry.get("path") or "") is not None:
                 apply_extracts(step.get("extracts"), ctx, parsed)
                 return
+            if not retry and parsed.get("result"):
+                apply_extracts(step.get("extracts"), ctx, parsed)
+                return
+            # 【W40】失败响应不得 apply_extracts：失败体里的空值/错误结构写入 ctx
+            # 会污染所有下游依赖用例（拿到 "id": null 之类假值继续跑，错误面目全非）。
+            # 旧条件 `not parsed.get("result")` 恰好在失败时也 apply——反了。
+            print("[pre] %s 前置失败（result=false 或未达 retry_until.path），"
+                  "跳过 extracts，依赖本步骤的用例将按缺配置跳过" % action)
+            return
         if i < tries - 1:
             time.sleep(float(retry.get("sleep") or 0.5))
 

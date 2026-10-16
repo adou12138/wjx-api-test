@@ -43,6 +43,16 @@ def base_params(contract):
             out[f["name"]] = 0
         elif t == "bool":
             out[f["name"]] = False
+        elif t in ("array", "list"):
+            # 【W31】结构化默认值：array 填 "test" 是类型噪音（基线本身非法），
+            # 部分成功类用例整块失真。空数组是合法基线；无法判定时标记留痕。
+            out[f["name"]] = []
+        elif t in ("object", "struct"):
+            out[f["name"]] = {}
+        elif t in ("unknown", "") or "/" in t:
+            # 未知/复合类型：保守填空串，但标记该字段基线需人工补
+            out[f["name"]] = "test"
+            out.setdefault("_needs_manual_baseline", []).append(f["name"])
         else:
             out[f["name"]] = "test"
     return out

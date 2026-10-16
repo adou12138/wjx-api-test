@@ -1254,28 +1254,6 @@ def check_currency(amount, currency, expected_scale=2, max_value=None):
     if problems:
         return False, problems, f"金额校验失败: {'; '.join(problems)}"
     return True, [], f"金额 {amount} {currency} 校验通过"
-
-    from decimal import Decimal
-    problems = []
-    try:
-        d = Decimal(str(amount))
-    except Exception:
-        return False, ["金额无法解析为数字"], f"金额非法: {amount}"
-    exp = d.as_tuple().exponent
-    scale = -exp if isinstance(exp, int) and exp < 0 else 0
-    if scale != expected_scale:
-        problems.append(f"精度 {scale} 位，预期 {expected_scale} 位")
-    if d < 0:
-        problems.append("金额为负数")
-    if max_value is not None and d > Decimal(str(max_value)):
-        problems.append(f"金额超出上限 {max_value}")
-    if not currency or len(str(currency)) != 3 or not str(currency).isalpha():
-        problems.append(f"币种代码「{currency}」不符合 ISO 4217 三位字母规范")
-    if problems:
-        return False, problems, f"金额校验失败: {'; '.join(problems)}"
-    return True, [], f"金额 {amount} {currency} 校验通过"
-
-
 def run_na(case_no, name, reason, category="适用性-N/A", dimension=""):
     """记录 N/A 用例：接口不支持该功能，跳过执行但记录在案。
     N/A 不计入通过率，但必须列出证明已做适用性判断。
@@ -1765,7 +1743,12 @@ def run(case_no, name, action, expect_success, category,
 
     # 【浅用例检测】仅断言 result=true、未做深度断言（contract/增强断言），是"报告看似完整但覆盖浅"的主因。
     # 不强制失败（合法 happy-path 也可浅），但记低危观察并在汇总告警，避免静默掩盖弱覆盖。
-    if status == "PASS" and expect_success and not contract:
+    # 【W51 反假告警】深度校验（cross_list/pagination/count_delta/trace_id 等
+    # case_runner.CHECKS 注册过的 check）的用例**不是浅用例**——它们只是不挂
+    # contract 标志，断言深度由 check 函数提供。旧判定把这类用例也计入
+    # shallow_passes，汇总里「浅用例 N 条」大部分是假告警。kw 里有 check 的跳过。
+    _deep_check = bool(kwargs.get("check"))
+    if status == "PASS" and expect_success and not contract and not _deep_check:
         global shallow_passes
         shallow_passes += 1
         add_observation(f"[{case_no}]{name} 浅用例：仅断言 result=true，未校验契约字段或追加增强断言",
@@ -2230,6 +2213,10 @@ def main():
     if shallow_passes:
         print("\n⚠️ 浅用例告警：%d 个用例仅断言 result=true、未做深度断言（契约/增强断言），"
               "报告看似完整但覆盖浅，建议补充 contract=True 或增强断言。" % shallow_passes)
+    # 【W41 如实声明】稳定性检测只对「多轮结果合并」生效；单轮无 flaky 不代表稳定
+    if not _ATTR.detect_flaky(results):
+        print("（稳定性检测：本轮为单轮结果，未做 flaky 判定——请勿据此认为用例稳定；"
+              "多轮结果合并后重跑汇总才会触发检测）")
 
     import csv
     def write_csv(path, rows):

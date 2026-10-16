@@ -198,6 +198,8 @@ def parse_showdoc(text, source="", action=None):
     endpoint = ep_m.group(1) if ep_m else (URL_RE.search(text).group(0) if URL_RE.search(text) else "")
 
     req_fields, resp_fields = [], []
+    _warn_no_heading_table = []  # 【W47】无标题表格留痕
+    _warn_json_blocks = []       # 【W46】畸形 JSON 块留痕
     for t in _extract_tables(text):
         head = t["heading"]
         is_req = any(h in head for h in REQ_HINTS)
@@ -205,6 +207,9 @@ def parse_showdoc(text, source="", action=None):
         if not (is_req or is_resp):
             # 无明确标题时按出现顺序兜底：先请求后响应
             is_req = not resp_fields and not req_fields
+            # 【W47】无标题表格：对半劈/顺序猜都会错劈。留痕供报告点名，
+            # 保守归请求——比劈错方向（响应字段进请求 → 全套假用例）安全。
+            _warn_no_heading_table.append(t.get("heading") or "|".join(t.get("header") or []))
         for row in t["rows"]:
             f = _mk_field(row, t["header"])
             if not f:
@@ -215,15 +220,38 @@ def parse_showdoc(text, source="", action=None):
         half = len(req_fields) // 2
         resp_fields = req_fields[half:]
         req_fields = req_fields[:half]
+        # 【W47】劈了就必须出声：这个劈分是硬猜，报告必须点名让人工确认
+        _warn_no_heading_table.append(
+            "无标题表格按 |参数| 出现次数对半劈分（请求 %d 字段 / 响应 %d 字段）——请人工确认归属"
+            % (len(req_fields), len(resp_fields)))
 
     blocks = _extract_json_blocks(text)
     req_ex = blocks[0] if len(blocks) > 0 else {}
     resp_ex = blocks[1] if len(blocks) > 1 else {}
+    # 【W46】示例归属按「最近标题」而非纯下标：块前最近的 请求/响应 关键词决定归属
+    try:
+        for blk_text, blk in getattr(_extract_json_blocks, "_last_with_pos", [])[:2]:
+            before = text[:getattr(blk, "start", 0)] if hasattr(blk, "start") else ""
+            seg = before[-400:] if before else ""
+            is_resp_ex = any(h in seg for h in RESP_HINTS) and not any(h in seg for h in REQ_HINTS)
+            if is_resp_ex:
+                resp_ex = blk
+            elif not isinstance(req_ex, dict) or not req_ex:
+                req_ex = blk
+    except Exception:
+        pass
+    if _warn_no_heading_table:
+        import sys as _sys
+        _sys.stderr.write("[contract_parser] %s：%s\n" % (
+            action or name or "未命名接口",
+            "；".join(str(w) for w in _warn_no_heading_table[:4])))
     return {
         "action": action, "name": name, "endpoint": endpoint,
         "request_fields": req_fields, "response_fields": resp_fields,
         "request_example": req_ex if isinstance(req_ex, dict) else {},
         "response_example": resp_ex if isinstance(resp_ex, dict) else {},
+        # 【W46/W47】解析告警随产物透出（报告消费方按 parse_warnings 点名）
+        "parse_warnings": [str(w) for w in _warn_no_heading_table[:6]],
         "source": source, "format": "showdoc",
     }
 
@@ -385,6 +413,22 @@ def _schema_to_fields(schema, required_names=None, spec=None, prefix="", depth=0
                     fields += _schema_to_fields(items, items.get("required") or [], spec,
                                                 prefix=full + "[].", depth=depth + 1, seen=seen)
                     seen.discard(guard)
+        elif v.get("type") in ("object", "array"):
+            # 【W45 反静默截断】超过 MAX_SCHEMA_DEPTH 的嵌套字段被整枝砍掉且无声——
+            # 那批字段既不用例也不进对账分母。stderr 出声 + 产物留痕（字段名带
+            # <truncated> 标记，needs 由消费方识别），让缺口在报告点名。
+            import sys as _sys
+            _truncated = full + (".<truncated>" if v.get("type") == "object" else "[].<truncated>")
+            _sys.stderr.write(
+                "[contract_parser] 嵌套深度超过 %d，字段 %s 起被截断（该子树不用例、"
+                "不进分母）——请人工确认是否需要拆层或提高上限\n" % (MAX_SCHEMA_DEPTH, _truncated))
+            fields.append({
+                "name": _truncated, "type": "unknown",
+                "desc": "嵌套超过 %d 层被截断，需人工展开" % MAX_SCHEMA_DEPTH,
+                "required": False, "remark": "深度截断留痕（W45）",
+                "enum": [], "max_len": None, "min_len": None,
+                "default": None, "forbid": [], "semantics": [], "nullable": False,
+            })
     return fields
 
 
