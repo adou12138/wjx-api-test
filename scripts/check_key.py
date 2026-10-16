@@ -148,6 +148,10 @@ def required_checks(contract):
         name = str(f.get("name") or "").strip()
         if not name:
             continue
+        # 【二轮审查】<truncated> 深度截断占位字段不进分母：生成器构造不了超深
+        # 嵌套请求，声明即永久假缺口（与 unknown_combo 同类处理——留痕不留在分母）。
+        if "<truncated>" in name or "_combo>" in name:
+            continue
         if f.get("required"):
             out.append(_chk("missing_required", name, "必填字段缺失应被拒绝"))
         # 可选或可空：只需一条 over_validation。写成两个 if 分别追加会让

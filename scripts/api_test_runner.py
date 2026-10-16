@@ -1699,18 +1699,23 @@ def run(case_no, name, action, expect_success, category,
             # 【反假通过 W1】未断言具体错误文案时，不得把任何 result=false 直接判 PASS：
             # 「未登录/缺 sign/网关拒绝」导致的失败与「目标校验生效」在报文上无法区分，
             # 默认放行会让校验缺失类真缺陷静默溜走。降级为「待确认」高危观察：
-            # 进 findings 留痕（可人工翻案），但不计 PASS——覆盖率按已执行计（观察带维度），
-            # 通过率分母不受影响（既非 PASS 也非 FAIL）。
+            # 进 findings 留痕（可人工翻案），但不计 PASS。
+            # 【二轮审查口径澄清】该维度是否被门禁判「已执行」由 coverage_gate 的
+            # kind/status 过滤决定（kind=待确认 不补计维度）——W1 的承诺是
+            # 「留痕可翻案」，不是「观察算已执行」。两条注释此前口径矛盾，以本条为准。
             status = "待确认"
             reason = (f"result=false({errmsg})，但未断言具体错误文案（err_exact 缺失）——"
                       f"无法区分「目标校验生效」与「未登录/缺参数等其它拒绝原因」，需人工确认")
+            # 【二轮审查】展开 auto_evidence 全量（含 request_id/trace_id）——
+            # W1 的目标就是"可人工翻案"，翻案正需要这两列；只传 http_code 会让
+            # 待确认行的采集列恒空，与同函数 add_issue 路径证据链不一致。
             add_finding(fid=str(case_no), kind="待确认",
                         desc=f"[{case_no}]{name} 异常用例被拒绝，但未断言具体错误文案，"
                              f"拒绝原因可能与测试意图无关：{errmsg}",
                         payload=payload,
                         expected="拒绝文案指向测试意图的目标字段名，或补 err_exact 后重跑",
                         actual=f"拒绝文案：{errmsg}",
-                        severity="高", dimension=dimension, http_code=_ev["http_code"])
+                        severity="高", dimension=dimension, **_ev)
     elif result is False and expect_success:
         # 关键陷阱 3：安全拦截 ≠ 缺陷。带 tolerate_reject 的用例（如注入特殊字符探渲染降级）
         # 被内容安全策略拦下时按「符合预期」结算，避免把策略生效误报成接口缺陷。
@@ -1854,7 +1859,7 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
                         payload=payload,
                         expected="拒绝文案指向测试意图的目标字段，或补 err_exact 后重跑",
                         actual=f"拒绝文案：{errmsg}",
-                        severity="高", dimension=dimension, http_code=_ev["http_code"])
+                        severity="高", dimension=dimension, **_ev)
     else:
         status, reason = "FAIL", f"未知result值: {result}"
         add_issue(f"[{case_no}]{name} 返回未知result值: {result}", payload, fid=case_no,

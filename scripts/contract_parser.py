@@ -26,8 +26,9 @@ import json
 import os
 import re
 
-REQ_HINTS = ("请求参数", "请求字段", "请求体", "输入参数")
-RESP_HINTS = ("响应参数", "响应字段", "返回参数", "输出参数", "响应体")
+# 【W46】含「示例」形态：示例段的标题（如「## 请求示例」）也要能被归属判定识别
+REQ_HINTS = ("请求参数", "请求字段", "请求体", "输入参数", "请求示例")
+RESP_HINTS = ("响应参数", "响应字段", "返回参数", "输出参数", "响应体", "响应示例")
 
 MAX_RE = re.compile(r"(?:最长|最多|不超过|长度不能超过|长度上限|最大|长度限制|长度)\s*(\d+)")
 MIN_RE = re.compile(r"(?:最短|最少|不小于|最小|至少)\s*(\d+)")
@@ -168,16 +169,21 @@ def _mk_field(cells, header):
     }
 
 
-def _extract_json_blocks(text):
+def _extract_json_blocks(text, _with_pos=None):
+    """提取 ```json 代码块。_with_pos 传 list 时顺带收集 (start_offset, block)，
+    供 W46 的「示例按最近标题归属」消费（此前该属性从未被写入，归属修复是死代码）。"""
     blocks = []
     for m in re.finditer(r"```(?:json|JSON)?\s*(.*?)```", text, re.S):
         raw = _unescape(m.group(1)).strip()
         if not raw.startswith("{"):
             continue
         try:
-            blocks.append(json.loads(raw))
+            blk = json.loads(raw)
         except Exception:
             continue
+        blocks.append(blk)
+        if _with_pos is not None:
+            _with_pos.append((m.start(), blk))
     return blocks
 
 
@@ -225,21 +231,23 @@ def parse_showdoc(text, source="", action=None):
             "无标题表格按 |参数| 出现次数对半劈分（请求 %d 字段 / 响应 %d 字段）——请人工确认归属"
             % (len(req_fields), len(resp_fields)))
 
-    blocks = _extract_json_blocks(text)
-    req_ex = blocks[0] if len(blocks) > 0 else {}
-    resp_ex = blocks[1] if len(blocks) > 1 else {}
-    # 【W46】示例归属按「最近标题」而非纯下标：块前最近的 请求/响应 关键词决定归属
-    try:
-        for blk_text, blk in getattr(_extract_json_blocks, "_last_with_pos", [])[:2]:
-            before = text[:getattr(blk, "start", 0)] if hasattr(blk, "start") else ""
-            seg = before[-400:] if before else ""
-            is_resp_ex = any(h in seg for h in RESP_HINTS) and not any(h in seg for h in REQ_HINTS)
-            if is_resp_ex:
-                resp_ex = blk
-            elif not isinstance(req_ex, dict) or not req_ex:
-                req_ex = blk
-    except Exception:
-        pass
+    # 【W46】示例归属按「最近标题」而非纯下标：块前最近的 请求/响应 关键词决定归属。
+    # _extract_json_blocks 同趟收集位置（旧实现挂函数属性从未被写入——死代码）。
+    _pos = []
+    blocks = _extract_json_blocks(text, _with_pos=_pos)
+    req_ex, resp_ex = {}, {}
+    for start, blk in _pos:
+        seg = text[max(0, start - 400):start].lower()
+        is_resp_ex = any(h.lower() in seg for h in RESP_HINTS) and not any(
+            h.lower() in seg for h in REQ_HINTS)
+        if is_resp_ex and not resp_ex:
+            resp_ex = blk
+        elif not req_ex:
+            req_ex = blk
+    # 回退：带标题归属一无所获时按旧下标约定（第 1 块请求、第 2 块响应）
+    if not req_ex and not resp_ex:
+        req_ex = blocks[0] if len(blocks) > 0 else {}
+        resp_ex = blocks[1] if len(blocks) > 1 else {}
     if _warn_no_heading_table:
         import sys as _sys
         _sys.stderr.write("[contract_parser] %s：%s\n" % (

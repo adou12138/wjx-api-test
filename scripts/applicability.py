@@ -215,6 +215,8 @@ def judge(contract, with_business=None):
 
     # 【W30 配套】操作类型未确认时：幂等/终态（E 维）降为选测——在错误假设上
     # 硬测状态机比漏测更糟（假 FAIL 淹没真缺陷）。
+    # 注：查询基线的 required 本不含 E，此分支实际生效场景是删除/修改类契约被
+    # 误命中其它关键词之外的情形（防御性兜底，保留成本为零）。
     if op_unconfirmed and "E" in required:
         required.remove("E")
         if "E" not in optional:

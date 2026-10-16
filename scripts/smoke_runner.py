@@ -281,10 +281,15 @@ def run_pre(step: dict, cfg: dict, ctx: Ctx, call, dry: bool) -> None:
                 return
             # 【W40】失败响应不得 apply_extracts：失败体里的空值/错误结构写入 ctx
             # 会污染所有下游依赖用例（拿到 "id": null 之类假值继续跑，错误面目全非）。
-            # 旧条件 `not parsed.get("result")` 恰好在失败时也 apply——反了。
-            print("[pre] %s 前置失败（result=false 或未达 retry_until.path），"
-                  "跳过 extracts，依赖本步骤的用例将按缺配置跳过" % action)
-            return
+            # 【二轮审查修复】retry 场景下「path 未就绪」不是终局——继续轮询剩余次数
+            # （retry_until 的唯一用途就是等最终一致性：创建后需等待才能查到）。
+            # 立即 return 会让 retry_until 整类失效、前置误报失败。仅在不重试或
+            # 已到最后一次时才按失败收场。
+            is_last = i >= tries - 1
+            if not retry or is_last:
+                print("[pre] %s 前置失败（result=false 或未达 retry_until.path），"
+                      "跳过 extracts，依赖本步骤的用例将按缺配置跳过" % action)
+                return
         if i < tries - 1:
             time.sleep(float(retry.get("sleep") or 0.5))
 
