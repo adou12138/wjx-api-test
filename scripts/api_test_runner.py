@@ -1631,10 +1631,14 @@ def _strip_control_keys(kwargs):
 
 def run(case_no, name, action, expect_success, category,
         contract=False, err_exact=None, applicability="适用", dimension="",
-        tolerate_reject=None, **kwargs):
+        tolerate_reject=None, check=None, **kwargs):
     """执行单个用例，记录结果并收集问题/观察。
     err_exact: 异常用例期望命中的错误关键词列表；不命中则判 FAIL 并记问题。
     dimension: 用例所属维度编号，写入结果供覆盖率门禁统计——**不是请求参数**。
+    check: 深度校验标识（case_runner.CHECKS 注册的检查名，如 cross_list/pagination）。
+    带 check 的用例不计入 shallow_passes（其断言深度由 check 函数提供）——
+    命名参数保证它不会像普通 kwargs 一样泄漏进请求报文（【审查修复】此前
+    exec_case 不传、kwargs 形态又会进 payload，两头都不对）。
     注意方向：expect_success=True 表示"合法输入应成功"；expect_success=False 表示"用例本身
     就是在测'应被拒绝'的场景"。**绝不要把非法输入配成 expect_success=True**——
     那会把"接口没做校验"误判成"测试通过"。参数校验类用例请改用 assert_validation()。"""
@@ -1752,7 +1756,10 @@ def run(case_no, name, action, expect_success, category,
     # case_runner.CHECKS 注册过的 check）的用例**不是浅用例**——它们只是不挂
     # contract 标志，断言深度由 check 函数提供。旧判定把这类用例也计入
     # shallow_passes，汇总里「浅用例 N 条」大部分是假告警。kw 里有 check 的跳过。
-    _deep_check = bool(kwargs.get("check"))
+    # 【W51 反假告警】check 已升为 run() 的命名参数（exec_case 透传），深度校验
+    # 用例（cross_list/pagination/count_delta/trace_id 等）不计浅用例——断言深度
+    # 由 check 函数提供；命名参数形态保证不进请求报文也不进 kwargs。
+    _deep_check = bool(check)
     if status == "PASS" and expect_success and not contract and not _deep_check:
         global shallow_passes
         shallow_passes += 1

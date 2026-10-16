@@ -49,6 +49,25 @@ class TestRequiredChecks(unittest.TestCase):
         rec2 = check_key.required_checks(_contract([{"name": "y", "required": True}]))
         self.assertNotIn("null_value:y", [r["key"] for r in rec2])
 
+    def test_null_value_denominator_matches_p07_quota(self):
+        """【审查修复】null_value 分母必须与 p07_gen 的族配额选集严格一致。
+
+        可选字段超过 null_state_fields 配额（默认 6）时，配额外字段的 B-NULL
+        被有意截断——分母若仍全量声明，被砍字段每轮刷永久假缺口（实测 8 字段
+        契约每轮 2 条）。端到端断言：required_checks 的 null_value 集合 ==
+        p07_gen 交付派生集合，超出配额一倍也不许漂移。"""
+        import pattern_engine
+        contract = {"request_fields": [
+            {"name": "opt%d" % i, "type": "string"} for i in range(8)]}
+        denominator = {r["key"] for r in check_key.required_checks(contract)
+                       if r["key"].startswith("null_value")}
+        delivered = {check_key.derive_key(c) for c in
+                     pattern_engine.p07_gen(contract, {"base": {}})}
+        delivered = {k for k in delivered if "null_value" in k}
+        self.assertEqual(denominator, delivered,
+                         "null_value 分母与 P07 交付不对齐：分母独有 %s / 交付独有 %s"
+                         % (sorted(denominator - delivered), sorted(delivered - denominator)))
+
     def test_max_len_and_enum(self):
         rec = check_key.required_checks(_contract([
             {"name": "a", "max_len": 10},

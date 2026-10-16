@@ -1305,6 +1305,8 @@ def exec_case(case, dry=False):
                              contract=bool(keys), applicability=case.get("applicability", "适用"),
                              dimension=dim,
                              tolerate_reject=expect.get("tolerate_reject"),
+                             # 【W51 配套】check 透传给 run()：深度校验用例不计浅用例。
+                             check=check or None,
                              **params)
     else:
         parsed, _ = R.assert_validation(cid, name, action, err_exact=expect.get("err_keywords"),

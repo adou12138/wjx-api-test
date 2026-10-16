@@ -84,40 +84,42 @@ class TestW2AssertValidationMismatch(unittest.TestCase):
 
 
 class TestW9GateDenominator(unittest.TestCase):
-    """W9：coverage_gate 分母——缺配置观察不补计维度，真缺陷补计。"""
+    """W9：coverage_gate 分母——缺配置观察不补计维度，真缺陷补计。
 
-    def _collect(self):
-        executed = set()
-        for r in R.results:
-            d = r.get("dimension")
-            if not d:
-                continue
-            if str(r.get("status") or "").upper() in R.EXECUTED_STATUSES:
-                executed.update(t.strip() for t in str(d).split(",") if t.strip())
-        for f in R.findings:
-            if R._is_coverage_gap(f):
-                continue
-            if str(f.get("kind") or "").strip() != "缺陷":
-                continue
-            if "未执行" in str(f.get("desc") or ""):
-                continue
-            d = f.get("dimension")
-            if d:
-                executed.update(t.strip() for t in str(d).split(",") if t.strip())
-        return executed
+    【审查修复】旧版在测试里逐行复刻门禁收集逻辑（本地副本）——门禁实现被改坏
+    时本测试仍绿。改为驱动**真 coverage_gate()**：声明 COVERAGE_PLAN 后跑门禁，
+    断言缺口清单里的维度构成。"""
+
+    def setUp(self):
+        self._orig_plan = R.COVERAGE_PLAN
+        self._orig_blocked = R.coverage_blocked
+        R.results.clear()
+        R.findings.clear()
+
+    def tearDown(self):
+        R.COVERAGE_PLAN = self._orig_plan
+        R.coverage_blocked = self._orig_blocked
+        R.results.clear()
+        R.findings.clear()
+
+    def _gate_missing(self):
+        """跑真门禁，返回缺口（COV- 台账）中的维度集合。"""
+        R.coverage_gate()
+        return {str(f.get("dimension") or "").strip()
+                for f in R.findings if R._is_coverage_gap(f)}
 
     def test_need_config_observation_not_executed(self):
-        R.results.clear()
-        R.findings.clear()
+        """只有「缺配置未执行」观察的维度必须出现在缺口清单——不许被观察冒充已执行。"""
+        R.COVERAGE_PLAN = ["X"]
         R.add_observation("[x] check=pagination 未执行：缺少配置 read_action",
                           {}, fid="x", severity="低", dimension="X")
-        self.assertNotIn("X", self._collect())
+        self.assertIn("X", self._gate_missing())
 
     def test_real_defect_counts(self):
-        R.results.clear()
-        R.findings.clear()
+        """有真缺陷（add_issue，真实执行产物）的维度不算缺口。"""
+        R.COVERAGE_PLAN = ["B"]
         R.add_issue("[b] 响应缺字段", {}, fid="b", dimension="B")
-        self.assertIn("B", self._collect())
+        self.assertNotIn("B", self._gate_missing())
 
 
 class TestW11EdgeDenominator(unittest.TestCase):
@@ -260,9 +262,17 @@ class TestW34ConfigGate(unittest.TestCase):
 
     def test_ensure_config_idempotent_when_configured(self):
         import case_runner as CR
-        # _bootstrap 已注入替身值 → 校验通过且幂等
-        CR.ensure_runnable_config()
-        CR.ensure_runnable_config()  # 第二次不再检查也不报错
+        # 【审查修复】_CONFIG_VERIFIED 是模块级全局，同进程更早的 exec_case 测试
+        # 会把它置 True → 两次调用全是 no-op，「幂等」空转假通过。重置后再验证。
+        original = CR._CONFIG_VERIFIED
+        CR._CONFIG_VERIFIED = False
+        try:
+            CR.ensure_runnable_config()
+            self.assertTrue(CR._CONFIG_VERIFIED, "首次调用应置位")
+            CR.ensure_runnable_config()  # 第二次：已置位短路，不重复校验也不报错
+            self.assertTrue(CR._CONFIG_VERIFIED)
+        finally:
+            CR._CONFIG_VERIFIED = original
 
 
 if __name__ == "__main__":

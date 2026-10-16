@@ -133,7 +133,18 @@ def required_checks(contract):
     永远无法兑现的假缺口，那正是本模块要防的失败模式。
     """
     out = []
-    for f in (contract.get("request_fields") or []):
+    fields = list(contract.get("request_fields") or [])
+    # 【审查修复·null_value 配额对齐】p07_gen 的 B-NULL 只对 pick_by_family(
+    # 可选字段, null_state_fields 配额) 的**选集**生成（field_semantics 族保代表，
+    # 默认配额 6/discovery 12）——分母必须用同一选集声明，否则可选字段超过配额时
+    # 被砍字段的 null_value 每轮刷永久假缺口（8 可选字段实测每轮 2 条）。
+    # 选集逻辑与 pattern_engine.p07_gen 严格同源（同函数同配额键）。
+    from field_semantics import pick_by_family  # 局部导入：field_semantics 不依赖本模块，无环
+    _null_selected = {f.get("name") for f in pick_by_family(
+        [f for f in fields if not f.get("required")],
+        discovery_profile.get("null_state_fields"))} if any(
+        not f.get("required") for f in fields) else set()
+    for f in fields:
         name = str(f.get("name") or "").strip()
         if not name:
             continue
@@ -175,7 +186,9 @@ def required_checks(contract):
         # 却从不产出需求项——「显式 null 处理」漏测永远不出声。生成器对**可选**字段
         # 产 B-NULL-*（空值四态），这里对同一集合声明分母（required 字段的 null 语义
         # 由 missing_required 覆盖，不重复声明，避免虚增一倍缺口）。
-        if not f.get("required"):
+        # 【审查修复】分母限定在 p07_gen 的同源选集内（见函数头部 _null_selected），
+        # 配额外字段不声明——那批字段的 null 四态被族配额有意截断，声明即假缺口。
+        if not f.get("required") and name in _null_selected:
             out.append(_chk("null_value", name,
                             "可选字段显式传 null 不应被过度拒绝也不应破坏处理"))
     return out
