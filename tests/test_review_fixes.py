@@ -11,6 +11,8 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+import _bootstrap  # noqa: F401,E402 环境替身（必须先于生产模块导入）
 import api_test_runner as R   # noqa: E402
 import case_runner as CR      # noqa: E402
 import ui_baseline as UB      # noqa: E402
@@ -121,12 +123,16 @@ class TestUi1Generation(unittest.TestCase):
                         "富文本字段必须被注入代理参数，不能只测第一个字段")
 
     def test_long_value_respects_declared_max(self):
-        cases = PE.ui1_gen(self._contract(max_length=10), {"base": {}})
+        # 【W32 反转】字段键是 max_len（解析器统一口径），不是 max_length。
+        # 旧测试用 max_length 恰好命中了 W32 的错误键名——两边一起错导致恒绿。
+        # 现在按真实口径传入，断言不变：注入值不得超限。
+        cases = PE.ui1_gen(self._contract(max_len=10), {"base": {}})
         longs = [c for c in cases if "long" in c["id"]]
         self.assertTrue(longs, "long 用例仍须生成")
         injected = [c for c in longs if c["params"].get("title")]
+        self.assertTrue(injected, "title 是富文本优先字段，long 用例必须注入它")
         self.assertTrue(all(len(c["params"]["title"]) <= 10 for c in injected),
-                        "契约声明 max_length 时注入值不得超限（超限被拒是正确行为，不应制造误报）")
+                        "契约声明 max_len 时注入值不得超限（超限被拒是正确行为，不应制造误报）")
 
     def test_tolerate_reject_covers_length_and_char_filters(self):
         for w in ("长度", "超长", "不能超过", "过长", "字符"):

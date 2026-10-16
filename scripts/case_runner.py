@@ -39,6 +39,60 @@ except Exception:  # 独立运行兜底：无个人配置模块时保留占位�
 
 CSV_COLS = R.FINDING_CSV_COLS  # 台账列口径唯一来源在 api_test_runner，此处仅别名引用
 
+# 【W34 入口防呆】配置校验只存在于 api_test_runner.main()（直接跑深度流程才触发），
+# 而推荐入口 flow.py→case_runner / case_runner.main 都经 import 调用、绕过那道校验——
+# 空配置时每条 call() 返回 -1、全部判 ERROR 归 ENV、覆盖率全 skipped，
+# exit 0 产出「看似跑完」的空报告。本函数在真实执行前统一调用（幂等，跑多次只报一次）。
+_CONFIG_VERIFIED = False
+
+
+def ensure_runnable_config():
+    """BASE_URL/APPID/主账号缺失或配置矛盾时 sys.exit(2)，不让空配置静默跑完全程。
+
+    与 api_test_runner.main() 顶部的校验同一套口径（复用其文案与 config_consistency_check），
+    提前到真实请求发出之前；dry-run（不发请求）不经过这里，不受影响。
+    """
+    global _CONFIG_VERIFIED
+    if _CONFIG_VERIFIED:
+        return
+    missing = []
+    if not R.BASE_URL:
+        missing.append("WJX_BASE_URL（测试地址，取自契约文档『接口地址』，或用 personal_config.json 的 base_url）")
+    if not R.APPID:
+        missing.append("WJX_APPID（当前环境 appid，或用 personal_config.json 的 appid）")
+    if not R.CREATER_MAIN:
+        missing.append("WJX_MAIN（主账号，或用 personal_config.json 的 main_account）")
+    if missing:
+        sys.stderr.write(
+            "错误：以下个人参数未配置（case_runner 入口校验，与 api_test_runner.main 同口径）：\n"
+            "  - " + "\n  - ".join(missing) + "\n"
+            "配置方式（二选一，skill 包内不含任何个人数据）：\n"
+            "  1) 复制 assets/personal_config.example.json 为 personal_config.json 填入真实值，"
+            "放到 ~/.workbuddy/wjx-api-test/ 或通过 WJX_CONFIG 指定路径；\n"
+            "  2) 直接导出环境变量：WJX_BASE_URL / WJX_APPID / WJX_MAIN / WJX_SUB / WJX_CORPID。\n"
+            "（未配置就执行会让每条请求失败并全部归 ENV，产出一份看似完成实则什么都没测的报告。）\n")
+        sys.exit(2)
+    try:
+        from personal_config import config_consistency_check
+        consistency = config_consistency_check(
+            R.PERSONAL,
+            cross_env_requested=bool(os.environ.get("WJX_CROSS_ENV")),
+            cross_cfg=R.CROSS_CFG,
+        )
+        fatal = [m for lvl, m in consistency if lvl == "fatal"]
+        for m in fatal:
+            sys.stderr.write("错误（配置矛盾，禁止运行）：%s\n" % m)
+        if fatal:
+            sys.exit(2)
+        warns = [m for lvl, m in consistency if lvl == "warn"]
+        if warns:
+            print("⚠️ 配置一致性警告：")
+            for m in warns:
+                print("   - %s" % m)
+    except ImportError:
+        pass  # 独立兜底场景（无 personal_config 模块）：缺失校验已在上面完成
+    _CONFIG_VERIFIED = True
+
 # FAIL 后是否自动做最小复现缩减。可由执行配置 execution.minimize_findings=false 关闭
 # （也可用环境变量 WJX_NO_MINIMIZE=1），供离线/只读场景使用。
 MINIMIZE_ENABLED = True
@@ -514,6 +568,12 @@ def _check_idempotent(case, parsed, args):
     params = dict(case.get("params") or {})
     dim = case.get("dimension") or "AC"
     ok, results, msg = R.check_idempotent(action, lambda: dict(params), times=times)
+    if ok is None:
+        # 【W3 配套】接口全失败/响应缺 result——不具备幂等比对前提。
+        # 记观察留痕（归 ENV/需重跑），不得流入「幂等良好」也不得流入 FAIL。
+        R.add_observation("[%s] 幂等性无法验证：%s" % (case.get("id"), msg),
+                          params, fid=case.get("id"), severity="低", dimension=dim)
+        return
     if ok:
         R.add_observation("[%s] 相同请求重复 %d 次结果一致，幂等良好" % (case.get("id"), times),
                           params, fid=case.get("id"), severity="低", dimension=dim)
@@ -754,7 +814,13 @@ def _check_terminal_repeat(case, parsed, args):
         _need_config(case, "terminal_repeat", ["action"], "无法确定接口")
         return
     ok, _results, msg = R.check_idempotent(action, lambda: dict(params), times=2)
-    if ok is False:
+    if ok is None:
+        # 【W3 配套】不具备比对前提（接口全失败/响应缺 result），留痕不判定。
+        R.add_observation(
+            "[%s] 终态重复操作无法验证：%s" % (case.get("id"), msg),
+            params, fid=case.get("id"), severity="低",
+            dimension=case.get("dimension") or "E")
+    elif ok is False:
         R.add_observation(
             "[%s] 终态重复操作未幂等：%s（需人工确认是终态保护缺失还是幂等语义不同）"
             % (case.get("id"), msg), params, fid=case.get("id"),
@@ -1154,6 +1220,10 @@ def exec_case(case, dry=False):
         print("[%s] %-52s 维度=%-3s 预期=%s" % (cid, name[:52], dim,
                                             "成功" if expect.get("success") else "被拒绝"))
         return
+
+    # 【W34】真实执行前的配置防呆（幂等；dry-run 不经过这里）。空配置时每条请求
+    # 都会失败并全部归 ENV，产出 exit 0 的空报告——那是最危险的静默失败形态。
+    ensure_runnable_config()
 
     if not case.get("enabled", True):
         _skip(case, "SKIPPED", "未启用（%s）" % (case.get("note") or "enabled=false"))

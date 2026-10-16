@@ -226,25 +226,105 @@ def _resolve_ref(spec, ref):
 
 
 def _deref(spec, node):
-    """若 node 是 $ref 则解析为实际 schema（单层，调用方负责递归）。"""
+    """若 node 是 $ref 则解析为实际 schema（单层，调用方负责递归）。
+
+    【W18 兑现兄弟键】Swagger 2.0 常见「{$ref, maxLength, enum, description}」写法：
+    旧版只返回目标 schema，$ref 旁的兄弟约束键整体丢失 → 长度/枚举用例不生成、
+    对账分母缺项。改为合并：兄弟键优先（局部声明覆盖引用目标）。
+    """
     if isinstance(node, dict) and "$ref" in node:
-        return _resolve_ref(spec, node["$ref"])
+        resolved = _resolve_ref(spec, node["$ref"])
+        siblings = {k: v for k, v in node.items() if k != "$ref"}
+        if siblings:
+            merged = dict(resolved)
+            merged.update(siblings)
+            return merged
+        return resolved
     return node if isinstance(node, dict) else {}
+
+
+def _merge_alloff(schema, spec, depth=0):
+    """【W19】展开 allOf：合并各分支的 properties/required（继承/混入拼装请求体在
+    OpenAPI 3.x 极常见，旧版只读顶层 properties → 字段一个都解析不出且无告警）。
+    oneOf/anyOf 语义无法机械判定主形态，不展开——留给 TODO 留痕（由 _schema_to_fields
+    的 unknown_combo 标记）。"""
+    if not isinstance(schema, dict) or depth > MAX_SCHEMA_DEPTH:
+        return schema if isinstance(schema, dict) else {}
+    branches = schema.get("allOf")
+    if not isinstance(branches, list) or not branches:
+        return schema
+    merged = {k: v for k, v in schema.items() if k != "allOf"}
+    props = dict(merged.get("properties") or {})
+    req = list(merged.get("required") or [])
+    for br in branches:
+        br = _deref(spec, br)
+        if not isinstance(br, dict):
+            continue
+        br = _merge_alloff(br, spec, depth + 1)
+        for k, v in (br.get("properties") or {}).items():
+            props.setdefault(k, v)
+        for r in br.get("required") or []:
+            if r not in req:
+                req.append(r)
+    if props:
+        merged["properties"] = props
+    if req:
+        merged["required"] = req
+    return merged
 
 
 def _schema_to_fields(schema, required_names=None, spec=None, prefix="", depth=0, seen=None):
     """把 JSON Schema 展开为字段列表。
 
     - 递归展开嵌套 object 与 array.items，字段名用点路径（data.items[].name）
-    - 解析 $ref（spec 为整个契约文档；缺失时 $ref 按空 schema 处理）
+    - 解析 $ref（spec 为整个契约文档；缺失时 $ref 按空 schema 处理）；$ref 兄弟键合并
+    - allOf 展开合并（oneOf/anyOf 无法机械判定时产 unknown_combo 留痕）
     - depth/seen 双重防环：病态递归契约不会拖垮生成
     """
     spec = spec if isinstance(spec, dict) else {}
     seen = seen or set()
     required_names = required_names or []
     schema = _deref(spec, schema)
+    schema = _merge_alloff(schema, spec)
+    if depth == 0 and isinstance(schema, dict) and (
+            "oneOf" in schema or "anyOf" in schema):
+        # oneOf/anyOf：多形态无法机械判定「哪个分支是请求主形态」，静默跳过 = 整类漏测。
+        # 顶部留一条 TODO 字段（不带真实字段语义，needs 由消费方识别），点名需人工确认。
+        combo = "oneOf" if "oneOf" in schema else "anyOf"
+        fields = [{
+            "name": ("%s<%s_combo>" % (prefix, combo)) if prefix else "<%s_combo>" % combo,
+            "type": "unknown", "desc": "契约使用 %s 多形态，需人工确认主形态后拆分字段" % combo,
+            "required": False, "remark": "oneOf/anyOf 未自动展开（无法机械判定主形态）",
+            "enum": [], "max_len": None, "min_len": None,
+            "default": None, "forbid": [], "semantics": [],
+        }]
+        return fields
     props = schema.get("properties", {}) if isinstance(schema, dict) else {}
     fields = []
+    # 【W18 配套】body schema 本身是 scalar（string/integer + maxLength 等）且带参数名时，
+    # 没有 properties 可展开——按单个字段产出（参数名取 body 参数名或 action），
+    # 否则标量 body 的约束（最常见：字符串 + maxLength）整体不可见。
+    if not props and isinstance(schema, dict) and schema.get("type") in (
+            "string", "integer", "number", "boolean") and (
+            schema.get("maxLength") or schema.get("minimum") is not None
+            or schema.get("maximum") is not None or schema.get("enum")):
+        cons = _parse_constraints(str(schema.get("description", "")), "")
+        if "enum" in schema:
+            cons["enum"] = [(e, str(e)) for e in schema["enum"]]
+        if schema.get("maxLength") is not None:
+            cons["max_len"] = schema["maxLength"]
+        if schema.get("default") is not None:
+            cons["default"] = schema["default"]
+        fields.append({
+            "name": (schema.get("x-body-param-name") or prefix.rstrip(".") or "body"),
+            "type": str(schema.get("type", "")),
+            "desc": str(schema.get("description", "")), "required": bool(required_names),
+            "remark": str(schema.get("description", "")),
+            "enum": cons["enum"], "max_len": cons["max_len"], "min_len": cons["min_len"],
+            "default": cons["default"], "forbid": cons["forbid"], "semantics": [],
+            "nullable": bool(schema.get("nullable")) or "null" in str(schema.get("type", "")).split(","),
+        })
+        return fields
     for k, v in props.items():
         ref = v.get("$ref") if isinstance(v, dict) else None
         v = _deref(spec, v)
@@ -261,6 +341,10 @@ def _schema_to_fields(schema, required_names=None, spec=None, prefix="", depth=0
             "required": k in required_names, "remark": str(v.get("description", "")),
             "enum": cons["enum"], "max_len": cons["max_len"], "min_len": cons["min_len"],
             "default": cons["default"], "forbid": cons["forbid"], "semantics": [],
+            # 【W21】nullable 双口径：OpenAPI 3.x 的 nullable / JSON Schema 的 type 含 "null"。
+            # 下游 check_key / case_generator 都读 f.get("nullable")，解析侧不产出
+            # 等于「显式 null 处理」整类漏测且分母少算、门禁恒过。
+            "nullable": bool(v.get("nullable")) or "null" in str(v.get("type", "")).split(","),
         })
         # 嵌套展开：object 直接递归；array 展开 items 并加 [] 路径标记
         if depth < MAX_SCHEMA_DEPTH:
@@ -276,7 +360,9 @@ def _schema_to_fields(schema, required_names=None, spec=None, prefix="", depth=0
                 guard = items.get("$ref") or id(items)
                 if guard not in seen:
                     seen.add(guard)
-                    fields += _schema_to_fields(items, [], spec,
+                    # 【W20】数组元素对象的必填约束必须传递：旧版硬编码 []，
+                    # B-MISS 对数组内字段整类不生成、不进对账分母。
+                    fields += _schema_to_fields(items, items.get("required") or [], spec,
                                                 prefix=full + "[].", depth=depth + 1, seen=seen)
                     seen.discard(guard)
     return fields
@@ -324,7 +410,12 @@ def parse_openapi(spec, action=None):
         if not isinstance(prm, dict):
             continue
         if is_v2 and prm.get("in") == "body":
+            # 【W18】body 参数名要带下去：scalar body 走 _schema_to_fields 的单字段
+            # 分支时用它当字段名。schema 的 $ref 兄弟键由 _deref 合并保留。
+            prm_name = str(prm.get("name") or "")
             body_schema = _deref(spec, prm.get("schema", {}))
+            if prm_name and isinstance(body_schema, dict) and not body_schema.get("properties"):
+                body_schema.setdefault("x-body-param-name", prm_name)
             body_required = (body_schema or {}).get("required", [])
             continue
         # Swagger 2.0 的 formData/query/path/header 参数统一走下方通用字段处理
@@ -338,10 +429,14 @@ def parse_openapi(spec, action=None):
             "remark": str(prm.get("description", "")), "enum": cons["enum"],
             "max_len": cons["max_len"], "min_len": cons["min_len"], "default": cons["default"],
             "forbid": cons["forbid"], "semantics": [],
+            "nullable": bool(sc.get("nullable")) or "null" in str(sc.get("type", "")).split(","),
         })
     if not is_v2:
         body = ((op.get("requestBody", {}) or {}).get("content", {}) or {}).get("application/json", {})
         body_schema = _deref(spec, body.get("schema", {}))
+        # 【W19 配套】allOf 的 required 合并发生在 _merge_alloff 里，此处先展开一次，
+        # 否则 required_names 取到的是合并前的顶层（allOf 分支里的 required 丢失）。
+        body_schema = _merge_alloff(body_schema, spec)
         body_required = (body_schema or {}).get("required", [])
     if body_schema:
         req_fields += _schema_to_fields(body_schema, body_required, spec)

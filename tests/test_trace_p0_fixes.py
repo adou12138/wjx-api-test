@@ -13,6 +13,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+import _bootstrap  # noqa: F401,E402 环境替身（必须先于生产模块导入）
 
 
 def _reset_runner():

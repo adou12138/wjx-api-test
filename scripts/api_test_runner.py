@@ -489,16 +489,32 @@ def check_timezone(timestamp_str, expected_offset_hours=8, field_name="时间字
 def check_idempotent(action, payload_builder, times=2, **kwargs):
     """校验接口幂等性：重复发送相同请求 N 次，验证结果一致且不产生重复数据。
     返回 (ok, results_list, msg)。
-    用法：check_idempotent("1000107", lambda: {"creater": "x", "title": "幂等测试"}, times=2)"""
+    用法：check_idempotent("1000107", lambda: {"creater": "x", "title": "幂等测试"}, times=2)
+
+    【反假通过 W3】接口全失败时（code=-1 或 parsed 缺 result 键）不得判「幂等通过」：
+    None==None 的比对恒真，会把「接口宕机/网络挂」伪装成「幂等正常」。全失败返回
+    (None, results, msg)，由调用方归 ENV 或重试——绝不返回 True。
+    """
     results = []
     for i in range(times):
         p = build_payload(action, **payload_builder())
         p.update(kwargs)
         code, raw, parsed = call(p)
         results.append({"code": code, "parsed": parsed, "raw": raw[:200]})
-    # 比较结果
-    first = results[0]["parsed"]
-    all_same = all(r["parsed"] == first for r in results)
+    # 【W3】先验证「接口真的在正常响应」，再谈幂等：任何一次 code=-1（连接失败），
+    # 或 parsed 没有 result 键（响应非预期形状），都不具备比对前提。
+    comparable = []
+    for r in results:
+        if r["code"] == -1:
+            return None, results, "第 %d 次请求连接失败(code=-1)，无法验证幂等性（归 ENV，需重跑）" % (
+                results.index(r) + 1)
+        p = r["parsed"]
+        if not (isinstance(p, dict) and "result" in p):
+            return None, results, "第 %d 次响应无 result 键（非 JSON/网关错误），无法验证幂等性（需确认）" % (
+                results.index(r) + 1)
+        comparable.append(p)
+    first = comparable[0]
+    all_same = all(p == first for p in comparable)
     if all_same:
         return True, results, f"重复 {times} 次结果一致，幂等性通过"
     return False, results, f"重复 {times} 次结果不一致，幂等性存疑（需确认是否应幂等）"
@@ -1637,7 +1653,21 @@ def run(case_no, name, action, expect_success, category,
                 add_issue(f"[{case_no}]{name} 错误语义不准确：期望包含{err_exact}，实际「{errmsg}」",
                           payload, fid=case_no, expected=f"错误含{err_exact}", actual=errmsg)
         else:
-            status, reason = "PASS", f"result=false({errmsg})（未断言具体错误文案）"
+            # 【反假通过 W1】未断言具体错误文案时，不得把任何 result=false 直接判 PASS：
+            # 「未登录/缺 sign/网关拒绝」导致的失败与「目标校验生效」在报文上无法区分，
+            # 默认放行会让校验缺失类真缺陷静默溜走。降级为「待确认」高危观察：
+            # 进 findings 留痕（可人工翻案），但不计 PASS——覆盖率按已执行计（观察带维度），
+            # 通过率分母不受影响（既非 PASS 也非 FAIL）。
+            status = "待确认"
+            reason = (f"result=false({errmsg})，但未断言具体错误文案（err_exact 缺失）——"
+                      f"无法区分「目标校验生效」与「未登录/缺参数等其它拒绝原因」，需人工确认")
+            add_finding(fid=str(case_no), kind="待确认",
+                        desc=f"[{case_no}]{name} 异常用例被拒绝，但未断言具体错误文案，"
+                             f"拒绝原因可能与测试意图无关：{errmsg}",
+                        payload=payload,
+                        expected="拒绝文案指向测试意图的目标字段名，或补 err_exact 后重跑",
+                        actual=f"拒绝文案：{errmsg}",
+                        severity="高", dimension=dimension, http_code=_ev["http_code"])
     elif result is False and expect_success:
         # 关键陷阱 3：安全拦截 ≠ 缺陷。带 tolerate_reject 的用例（如注入特殊字符探渲染降级）
         # 被内容安全策略拦下时按「符合预期」结算，避免把策略生效误报成接口缺陷。
@@ -1749,11 +1779,24 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
             if all(k in errmsg for k in err_exact):
                 status, reason = "PASS", f"已拒绝且错误语义具体({errmsg})"
             else:
-                status, reason = "PASS", f"已拒绝，但错误语义不具体: 期望含{err_exact}, 实际「{errmsg}」"
-                add_observation(f"[{case_no}]{name} 已拒绝但错误语义不具体(H2)", payload, fid=case_no,
-                                expected=f"错误含{err_exact}", actual=errmsg, severity="低")
+                # 【反假通过 W2】与 run() 口径统一：配置了 err_exact 却未命中，说明
+                # 错误文案与测试意图不符（错对象名/占位未渲染/根因被掩盖）——这是真实
+                # 缺陷，不得降级成 PASS + 低危观察。run() 同场景判 FAIL，这里同样判。
+                status, reason = "FAIL", f"错误语义不具体: 期望含{err_exact}, 实际「{errmsg}」"
+                add_issue(f"[{case_no}]{name} 已拒绝但错误语义不具体(H2)：期望含{err_exact}，实际「{errmsg}」",
+                          payload, fid=case_no, expected=f"错误含{err_exact}", actual=errmsg,
+                          severity="中")
         else:
-            status, reason = "PASS", f"已拒绝({errmsg})（未断言具体错误文案）"
+            # 【反假通过 W1 同源】无 err_exact 的拒绝不判 PASS：与 run() 一致降级「待确认」。
+            status = "待确认"
+            reason = (f"已拒绝({errmsg})，但未断言具体错误文案——拒绝原因可能与测试意图无关，需人工确认")
+            add_finding(fid=str(case_no), kind="待确认",
+                        desc=f"[{case_no}]{name} 参数校验用例被拒绝，但未断言具体错误文案，"
+                             f"拒绝原因可能与测试意图无关：{errmsg}",
+                        payload=payload,
+                        expected="拒绝文案指向测试意图的目标字段，或补 err_exact 后重跑",
+                        actual=f"拒绝文案：{errmsg}",
+                        severity="高", dimension=dimension, http_code=_ev["http_code"])
     else:
         status, reason = "FAIL", f"未知result值: {result}"
         add_issue(f"[{case_no}]{name} 返回未知result值: {result}", payload, fid=case_no,
@@ -1804,6 +1847,17 @@ def coverage_gate():
     for f in findings:
         # 覆盖率缺口本身不算"触及维度"——否则门禁会用自己的缺口结论证明自己没问题。
         if _is_coverage_gap(f):
+            continue
+        # 【W9 反虚高】findings 里只有**真实跑出问题的记录**才补计维度。
+        # add_observation 的产出（kind=待确认）包含大量"缺配置未执行"的留痕
+        # （_need_config / 各类"未执行"观察），它们带 dimension 但描述的是"没跑成"——
+        # 计入 executed 等于让"缺配置没跑"冒充"已测过"。因此只有 add_issue 产出的
+        # kind=缺陷（真缺陷，必然来自真实执行）补计维度；"未执行"字样的观察一律排除，
+        # 与 _need_config 注释、case-coverage.md 口径对齐。
+        kind = str(f.get("kind") or "").strip()
+        if kind != "缺陷":
+            continue
+        if "未执行" in str(f.get("desc") or ""):
             continue
         d = f.get("dimension")
         if d:

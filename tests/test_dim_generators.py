@@ -4,6 +4,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
+import _bootstrap  # noqa: F401,E402 环境替身（必须先于生产模块导入）
 
 import case_generator as CG            # noqa: E402
 import dim_generators as DG            # noqa: E402

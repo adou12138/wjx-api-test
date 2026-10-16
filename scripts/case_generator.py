@@ -99,6 +99,16 @@ _PRIMITIVE_VALID = {
 _BAD_CANDIDATES = ([], {}, "__type_error__", 12345, True)
 
 
+def _is_nested_path(name):
+    """字段名是否为嵌套点路径（data.items[].name / data.user.name）。
+
+    嵌套字段无法在顶层 base_params 上安全变异：pop 顶层同名键删不掉嵌套字段、
+    直接赋值会改变类型结构——两类自动变异都会产出"参数≈base 原样"的无效用例，
+    期望被拒却大概率成功 = 假缺陷。判为嵌套的一律降级 TODO 留痕。
+    """
+    return "." in str(name or "") or "[]" in str(name or "")
+
+
 def type_tokens(ftype):
     """把类型串切成类型 token（与 check_key._declares_typed 同一口径）。
 
@@ -218,28 +228,51 @@ def gen_field_mutations(contract, base, action):
 
         # 1) 必填缺失 → 应被拒绝
         if f.get("required"):
-            p = dict(base)
-            p.pop(name, None)
-            out.append(_mk("B-MISS-%s" % name, "必填缺失：%s（应被拒绝）" % name, "B",
-                           "参数校验-必填", p,
-                           {"success": False, "err_keywords": [name]},
-                           action=action, priority="P0", source="generator:required_missing",
-                           evidence=["contract:required"], note="必填项缺失必须被拒绝；错误文案应指明字段"))
+            # 【W22】嵌套点路径字段（data.items[].name）无法从顶层 base_params 里
+            # pop/赋值——旧行为：base 原样发出 → 期望 success=False 却大概率成功
+            # = 假缺陷。改为降级 TODO 留痕，不产无效用例。
+            if _is_nested_path(name):
+                out.append(_mk("TODO-B-MISS-%s" % name,
+                               "必填缺失（嵌套字段，需人工构造）：删除 %s 后请求应被拒绝" % name,
+                               "B", "参数校验-必填", dict(base),
+                               {"success": False, "err_keywords": [name]},
+                               action=action, priority="P0", source="generator:required_missing:nested",
+                               evidence=["contract:required"],
+                               note="嵌套点路径字段无法在顶层参数上安全变异（自动删除会破坏结构），"
+                                    "降级人工构造；直接删顶层同名键不等价——那测的是另一个字段"))
+            else:
+                p = dict(base)
+                p.pop(name, None)
+                out.append(_mk("B-MISS-%s" % name, "必填缺失：%s（应被拒绝）" % name, "B",
+                               "参数校验-必填", p,
+                               {"success": False, "err_keywords": [name]},
+                               action=action, priority="P0", source="generator:required_missing",
+                               evidence=["contract:required"], note="必填项缺失必须被拒绝；错误文案应指明字段"))
 
         # 可选/可空字段的反向校验四态：合法缺省值不应被过度拒绝。
         if not f.get("required") or f.get("nullable"):
-            for state, value in (("missing", None), ("null", None), ("empty_string", "")):
-                p = dict(base)
-                if state == "missing":
-                    p.pop(name, None)
-                else:
-                    p[name] = value
-                out.append(_mk("B-OVER-%s-%s" % (name, state), "可选字段%s态：%s（不应过度校验）" % (state, name), "B",
-                               "参数校验-过度校验", p, {"success": True}, action=action,
-                               priority="P1", source="generator:over_validation", assertion_mode="over_validation",
-                               mutation_state=state,                                evidence=["contract:optional_or_nullable"],
-                               cleanup={"required": True, "actions": ["delete_fixture"]},
-                               note="合法可选/可空形态被拒绝时记录过度校验缺陷"))
+            # 【W22 同源】嵌套点路径字段无法在顶层安全变异 → 不产四态，降级 TODO。
+            if _is_nested_path(name):
+                out.append(_mk("TODO-B-OVER-%s" % name,
+                               "可选/可空四态（嵌套字段，需人工构造）：验证 %s 的缺省形态不被过度拒绝" % name,
+                               "B", "参数校验-过度校验", dict(base),
+                               {"success": True}, action=action, priority="P1",
+                               source="generator:over_validation:nested",
+                               assertion_mode="over_validation",
+                               note="嵌套字段缺省四态需人工在结构内构造，自动变异会破坏嵌套结构"))
+            else:
+                for state, value in (("missing", None), ("null", None), ("empty_string", "")):
+                    p = dict(base)
+                    if state == "missing":
+                        p.pop(name, None)
+                    else:
+                        p[name] = value
+                    out.append(_mk("B-OVER-%s-%s" % (name, state), "可选字段%s态：%s（不应过度校验）" % (state, name), "B",
+                                   "参数校验-过度校验", p, {"success": True}, action=action,
+                                   priority="P1", source="generator:over_validation", assertion_mode="over_validation",
+                                   mutation_state=state,                                evidence=["contract:optional_or_nullable"],
+                                   cleanup={"required": True, "actions": ["delete_fixture"]},
+                                   note="合法可选/可空形态被拒绝时记录过度校验缺陷"))
 
         # 2) 类型错误 → 应被拒绝。字符串字段轮流取不同非法形态，避免全部打同一分支
         bad = type_bad_for(f, ftype, str_seq)

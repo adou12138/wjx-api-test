@@ -570,6 +570,10 @@ def main():
         print("已保留生成的用例与智能计划；补齐执行配置后可加 --execute 重新运行。")
         return
 
+    # 【W34】真实执行前统一配置校验（与 case_runner.exec_case 内的钩子同源、幂等）。
+    # 校验只写在 api_test_runner.main() 时推荐入口会绕过它，空配置跑完全程出空报告。
+    case_runner.ensure_runnable_config()
+
     cases = select_by_profile(doc.get("cases") or [], profile)
     if args.only:
         wanted = {d.strip() for d in args.only.split(",") if d.strip()}

@@ -43,6 +43,7 @@ CONSTRAINT_TYPES = (
     "invalid_enum",       # 枚举越界值 → 应被拒绝
     "over_validation",    # 可选/可空形态 → 不应被过度拒绝
     "at_maximum",         # 恰好等于上限 → 应成功（边界口径）
+    "at_minimum",         # 恰好等于下限 → 应成功（边界口径）
     "null_value",         # 显式 null
 )
 
@@ -143,6 +144,10 @@ def required_checks(contract):
         if f.get("max_len") and f["max_len"] <= _active_max_len_cap():
             out.append(_chk("above_maximum", name,
                             "超出长度上限 %s 应被拒绝" % f["max_len"]))
+            # 【W11 补分母】生成器在同一条件下产 B-LEN-EDGE（恰好上限应成功，off-by-one
+            # 缺陷高发区），分母必须同步声明 at_maximum——否则边界用例漏产时门禁无感。
+            out.append(_chk("at_maximum", name,
+                            "恰好等于长度上限 %s 应成功（边界 off-by-one）" % f["max_len"]))
         # min_len 下边界：仅对 min_len >= 2 声明 below_minimum。生成器同样只在
         # min_len >= 2 时构造"低于下限"用例（ml-1 >= 1 才是明确的非空过短值）；
         # ml == 1 时低于值即空串，与可选空值/必填缺失语义重叠，交给 over_validation /
@@ -150,6 +155,11 @@ def required_checks(contract):
         if f.get("min_len") and int(f["min_len"]) >= 2:
             out.append(_chk("below_minimum", name,
                             "低于长度下限 %s 应被拒绝" % f["min_len"]))
+            # 【W11 补分母】B-LEN-MIN（恰好下限应成功）仅对无枚举字段生成（有枚举时
+            # 业务形态字符串会被枚举校验拒绝，构造即假缺陷）——分母与该承诺严格对齐。
+            if not f.get("enum"):
+                out.append(_chk("at_minimum", name,
+                                "恰好等于长度下限 %s 应成功（边界 off-by-one）" % f["min_len"]))
         if f.get("enum"):
             out.append(_chk("invalid_enum", name,
                             "枚举越界值应被拒绝（契约声明 %d 个取值）"

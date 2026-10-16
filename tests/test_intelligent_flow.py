@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
-
+sys.path.insert(0, str(ROOT / "tests"))
+import _bootstrap  # noqa: F401,E402 环境替身（必须先于生产模块导入）
 import flow
 
 

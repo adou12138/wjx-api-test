@@ -161,7 +161,15 @@ def p06_gen(c, ctx):
     out = []
     for f in _enum_fields(c):
         vals = [v for v, _ in f["enum"]]
-        bad = max(vals) + 1000 if vals else 9999
+        # 【W14】按值类型分别构造越界值：数值 +1000；字符串用非法占位。
+        # 旧写法 max(["A","B"])+1000 抛 TypeError 且被 run() 吞掉——字符串枚举的
+        # 越界用例（B-ENUM/K-ENUM）永久生成失败且无声。
+        if vals and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals):
+            bad = max(vals) + 1000
+        elif vals:
+            bad = "__invalid_enum__"
+        else:
+            bad = 9999
         p = dict(ctx["base"])
         p[f["name"]] = bad
         out.append(_mk("B-ENUM-%s" % f["name"], "枚举越界 %s=%s（应被拒绝）" % (f["name"], bad),
@@ -631,7 +639,9 @@ def ui1_gen(c, ctx):
     cases = []
     for target in targets:
         fdef = next((f for f in fields if f["name"] == target), {})
-        max_len = fdef.get("max_length") or fdef.get("maxLength") or fdef.get("max")
+        # 【W32】解析器产出的字段键是 max_len（全仓一致口径），不是 max_length/maxLength/max
+        # ——旧写法恒为 None，"按 max_len 造边界长文本"从未生效（靠 tolerate_reject 兜底）。
+        max_len = fdef.get("max_len")
         for key, value, why in UI_PROXY_PARAMS:
             if key == "long" and max_len:
                 try:
@@ -696,18 +706,43 @@ PATTERNS = [
 
 
 def run(contract, ctx):
-    """对契约跑一遍全部模式，返回 (cases, matched)。matched 为命中的模式摘要，便于报告溯源。"""
+    """对契约跑一遍全部模式，返回 (cases, matched)。matched 为命中的模式摘要，便于报告溯源。
+
+    【W13 反静默消失】match/gen 抛异常时不得无声吞掉——那会让一个维度悄悄不生成、
+    不进 cases/matched/TODO，是本引擎里最后一块"静默漏测"。改为：stderr 出声 +
+    生成一条 needs=manual 的 TODO 用例（进 cases，随产物可见），让缺口在报告点名。
+    """
     cases, matched = [], []
     for pid, pname, dim, m, g in PATTERNS:
         try:
-            if not m(contract, ctx):
-                continue
-        except Exception:
+            hit = m(contract, ctx)
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write(
+                "[pattern_engine] 模式 %s 的 match 判断异常（该维度本轮缺位，已记 TODO）：%s: %s\n"
+                % (pid, type(e).__name__, e))
+            cases.append({
+                "id": "TODO-%s" % pid, "name": "模式 %s 生成异常，需人工补用例：%s" % (pid, pname),
+                "dimension": dim, "enabled": False, "needs": "manual",
+                "params": {}, "expect": {}, "source": "pattern:%s:match_error" % pid,
+                "note": "match 阶段抛异常（见 stderr），模式缺位不得静默——请人工核查该维度",
+            })
+            matched.append({"id": pid, "name": pname, "dimension": dim,
+                            "cases": 0, "error": "match:%s" % type(e).__name__})
+            continue
+        if not hit:
             continue
         try:
             got = g(contract, ctx) or []
-        except Exception:
-            got = []
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write(
+                "[pattern_engine] 模式 %s 的生成器异常（该维度本轮缺位，已记 TODO）：%s: %s\n"
+                % (pid, type(e).__name__, e))
+            got = [{
+                "id": "TODO-%s" % pid, "name": "模式 %s 生成异常，需人工补用例：%s" % (pid, pname),
+                "dimension": dim, "enabled": False, "needs": "manual",
+                "params": {}, "expect": {}, "source": "pattern:%s:gen_error" % pid,
+                "note": "生成器抛异常（见 stderr），模式缺位不得静默——请人工核查该维度",
+            }]
         for c in got:
             c["action"] = c.get("action") or contract.get("action")
         cases += got

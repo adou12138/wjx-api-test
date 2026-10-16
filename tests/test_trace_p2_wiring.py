@@ -14,6 +14,8 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tests"))
+import _bootstrap  # noqa: F401,E402 环境替身（BASE_URL 空时 Request("") 在 mock 前就抛错）
 
 
 def _reset():

@@ -1,0 +1,82 @@
+{
+  "_comment": "问卷星冒烟参考实例【脱敏分发版】。结构与 smoke_config.example.json 同源；环境绑定资源（vid / 答卷文件名 / 答卷数据）为纯占位值——换到你的环境后必须按真实接口重新生成，不要原样使用。个人参数一律 <APPID>/<主账号>/<子账号>/<域名> 等占位符，运行时由 personal_config.json 或 WJX_* 环境变量解析。本文件不含任何真实凭据；团队真实值请另存 smoke_config_*_private.json（已 gitignore）。",
+  "name": "<域名>",
+  "base_url": "https://<域名>/openapi/{endpoint}",
+  "default_endpoint": "default.aspx",
+  "method": "POST",
+  "timeout": 60,
+  "tls_verify": false,
+  "action_param": "action",
+  "common_params": {
+    "encode": "sha1",
+    "appid": "<APPID>",
+    "sign": "1234"
+  },
+  "common_param_generators": {
+    "ts": "unix_ts"
+  },
+  "account": {
+    "main": "<主账号>",
+    "sub": "<子账号>"
+  },
+  "qps_tiers": {
+    "5": 0.2,
+    "10": 0.12,
+    "100": 0.02,
+    "200": 0.01,
+    "10000": 0.001
+  },
+  "error_retry": 2,
+  "error_retry_sleep": 1.0,
+  "teardown_enabled": false,
+  "env_keywords": [
+    "频率过快",
+    "连接",
+    "timeout",
+    "timed out",
+    "网络",
+    "请稍后"
+  ],
+  "na_keywords": [
+    "混合云",
+    "用户体系",
+    "通讯录",
+    "360",
+    "奖品",
+    "未开通",
+    "未启用",
+    "未创建",
+    "不支持",
+    "暂未",
+    "未配置",
+    "已废弃",
+    "已作废",
+    "非360",
+    "编辑中",
+    "暂停状态",
+    "oss路径异常",
+    "状态不能",
+    "没有符合条件",
+    "用户名已被占用",
+    "标签已存在",
+    "部门编码",
+    "之后又修改",
+    "发布之后",
+    "修改了此问卷"
+  ],
+  "overrides": {
+    "minimal_questions": "[{\"q_index\": 1, \"q_type\": 3, \"q_title\": \"冒烟测试单选题\", \"is_requir\": true, \"items\": [{\"item_index\": 1, \"item_title\": \"选项A\"}, {\"item_index\": 2, \"item_title\": \"选项B\"}]}]",
+    "tiny_png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMAAQAABQABDQot2wAAAABJRU5ErkJggg==",
+    "settings_vid": 100001,
+    "usersystem_vid": 100002,
+    "usersystem_uid": "1",
+    "response_vid": 100003,
+    "survey_360_vid": 100004,
+    "modify_vid": 100005,
+    "modify_score_key": "60000",
+    "sysid": "<SYSID>",
+    "corpid": "<CORPID>",
+    "submitdata": "1$2}2$<冒烟答卷文件名：上传接口返回的真实文件名，按环境重新生成>}3$<答卷问卷ID：按环境重新生成>_22_qdiv2_示例.png,22705,splicing.png}4$1",
+    "modify_submitdata": "1$<答卷ID：按环境重新生成>}2$<答卷姓名：按环境重新填写>}3$2}4$2}5$1|2}6$冒烟测试修改后的答卷内容占位文本。"
+  }
+}

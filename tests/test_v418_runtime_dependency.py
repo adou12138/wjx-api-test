@@ -18,6 +18,8 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+import _bootstrap  # noqa: F401,E402 环境替身（必须先于生产模块导入）
 
 import precondition_scan as PS  # noqa: E402
 import attribution_engine as AT  # noqa: E402

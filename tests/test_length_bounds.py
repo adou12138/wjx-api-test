@@ -91,10 +91,19 @@ class TestMinLenDenominator(_Reset):
         self.assertNotIn("below_minimum:code", _keys(rec["missing_keys"]),
                          "生成了 B-LEN-UNDER 就不该报 below_minimum 缺口")
 
-    def test_at_minimum_not_in_denominator(self):
-        """at_minimum 是'应成功'边界bonus，与 at_maximum 一样不进分母。"""
+    def test_at_minimum_in_denominator(self):
+        """【W11 反转】at_minimum 现在与生成器 B-LEN-MIN 对齐进分母：生成器对
+        min_len>=2 且无枚举的字段必产「恰好下限应成功」用例，漏产时对账必须出声——
+        边界 off-by-one 是缺陷高发区，不进分母等于该维度脱离门禁保护。
+        （旧断言"at_minimum 是 bonus 不进分母"已随批次1 P0 修复反转。）"""
         contract = {"request_fields": [{"name": "code", "type": "string", "required": True, "min_len": 6}]}
-        self.assertNotIn("at_minimum:code", _keys(check_key.required_checks(contract)))
+        self.assertIn("at_minimum:code", _keys(check_key.required_checks(contract)))
+
+    def test_at_minimum_with_enum_not_in_denominator(self):
+        """与生成器承诺对齐：有枚举字段不产 B-LEN-MIN，分母同样不声明。"""
+        contract = {"request_fields": [{"name": "st", "type": "string", "required": True,
+                                        "min_len": 6, "enum": ["a", "b"]}]}
+        self.assertNotIn("at_minimum:st", _keys(check_key.required_checks(contract)))
 
     def test_derive_key_maps_new_prefixes(self):
         self.assertEqual(check_key.derive_key({"id": "B-LEN-UNDER-code"}), "below_minimum:code")

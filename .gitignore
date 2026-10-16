@@ -7,6 +7,7 @@
 # —— 个人凭据（绝不上传）——
 personal_config.json
 smoke_config_wjx.json
+!assets/smoke_config_wjx.json
 smoke_config_*_private.json
 ~/.workbuddy/
 .env
