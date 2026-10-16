@@ -31,6 +31,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, List, Tuple
 
@@ -95,7 +96,12 @@ def load(explicit=None):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 doc = json.load(f)
-        except Exception:
+        except Exception as _exc:  # noqa: BLE001
+            # 基线文件存在但解析失败（损坏 / 非 UTF-8 / 非 JSON）。此前静默 continue，
+            # 上层只会报「未登记页面基线」——把「文件坏了」误报成「你没登记」，
+            # 排查方向被带偏。出声点名文件与原因。
+            print("[ui_baseline] 基线文件解析失败已跳过：%s（%s）" % (path, _exc),
+                  file=sys.stderr)
             continue
         if isinstance(doc, dict) and doc.get("template"):
             print("[ui_baseline] 跳过占位模板（template=true）：%s"

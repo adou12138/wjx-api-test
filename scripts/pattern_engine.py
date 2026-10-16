@@ -698,8 +698,11 @@ def ui1_gen(c, ctx):
             if key == "long" and max_len:
                 try:
                     value = value[:int(max_len)]
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    # 截断失败时此前静默 pass：实际注入的是**未截断**的值，与用例
+                    # 名称（「超长」）不符却无任何留痕。出声说明本次未按 max_len 截断。
+                    print("[pattern] UI1 超长值按 max_len=%s 截断失败（%s），"
+                          "本次注入未截断值" % (max_len, exc), file=sys.stderr)
             params = dict(ctx["base"])
             params[target] = value
             cases.append(_mk("UI1-%s-%s" % (key, target), "UI 代理：%s" % why, "C", "接口侧UI代理",

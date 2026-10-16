@@ -253,8 +253,12 @@ def call(payload, retries=2, extra_headers=None, adapter=None):
                         _err = _cls.get("errors") or _cls.get("message") or _st
                         parsed = {"result": False,
                                   "errormsg": "adapter[%s]: %s" % (_st, _err)}
-                except Exception:
-                    pass  # 分类器故障不改变原判（响应按原样交给下游）
+                except Exception as _exc:  # noqa: BLE001
+                    # 分类器故障不改变原判（响应按原样交给下游），但必须出声：adapter
+                    # 正是为「HTTP 200 + 业务 errors」补的防假通过机制，它自己故障了却
+                    # 零留痕，与「没注入 adapter」在产物上完全无从区分。
+                    print("[adapter] 响应分类器故障（%s），本次按原样交给下游：%s"
+                          % (_st, _exc), file=sys.stderr)
             return (code, raw, parsed)
         except urllib.error.HTTPError as e:
             raw = e.read().decode("utf-8", errors="replace")
@@ -329,6 +333,28 @@ def call_meta(payload, retries=None):
     return code, raw, parsed, dict(local)
 
 
+# 缺陷证据包目录与本次运行标识：台账「证据路径」列指向这里写出的脱敏 JSON。
+# 此前该列恒空——`evidence_bundle.write_bundle` 全仓只有 smoke_runner 接入，深度链路
+# 从不落证据包，开发拿不到复现线索，artifact_readback 每轮回读必报 EV_ALL_EMPTY。
+# 目录落在已 gitignore 的 api_test_out/ 下，不污染工作树；可用 WJX_EVIDENCE_DIR 覆盖，
+# 设成空串则关闭证据包产出（该列随之为空，回读会如实报缺口而不是静默）。
+EVIDENCE_DIR = os.environ.get("WJX_EVIDENCE_DIR", os.path.join("api_test_out", "evidence"))
+RUN_ID = time.strftime("run_%Y%m%d_%H%M%S")
+
+
+def _write_evidence(case_id, payload):
+    """为一个缺陷落脱敏证据包，返回路径；失败出声并返回空串（不阻断主流程）。"""
+    if not EVIDENCE_DIR:
+        return ""
+    try:
+        import evidence_bundle as _evid
+        return _evid.write_bundle(EVIDENCE_DIR, RUN_ID, case_id or "case", payload)
+    except Exception as exc:  # noqa: BLE001
+        print("[evidence] 证据包写入失败（case=%s）：%s；台账「证据路径」留空"
+              % (case_id, exc), file=sys.stderr)
+        return ""
+
+
 def add_finding(fid, kind, desc, payload, expected="", actual="", severity="", status="待确认",
                 dimension="", confidence=None, http_code=None, request_id="", trace_id="",
                 evidence_path="", attribution="", retest_status="待复测"):
@@ -338,7 +364,23 @@ def add_finding(fid, kind, desc, payload, expected="", actual="", severity="", s
     台账列与 case_runner.CSV_COLS 一一对应。采集三列（HTTP状态码 / 请求ID / TraceID）
     通常由调用方经 auto_evidence() 自动填入（run() / assert_validation() 已接好），
     直接调本函数时需自己带 http_code / request_id / trace_id。
+
+    证据路径与归因两列**在此兜底**，不再依赖调用方传：
+    - 缺陷（kind=缺陷）落一份脱敏证据包（`evidence_bundle.write_bundle`），台账「证据路径」
+      指向它。此前全仓只有 smoke_runner 接入 write_bundle，深度链路从不产出证据包——
+      开发拿不到复现线索，且 artifact_readback 每轮回读必报 EV_ALL_EMPTY。
+    - 归因默认为 `DEFECT`（本函数记的 kind=缺陷 就是「确认为接口缺陷」这一类，
+      与 attribution_engine 的 6 类同词表）；调用方知道更精确归因时用 attribution= 覆盖。
     """
+    if kind == "缺陷":
+        if not evidence_path:
+            evidence_path = _write_evidence(fid, {
+                "case": fid, "desc": desc, "request": payload,
+                "expected": expected, "actual": actual,
+                "http_code": http_code, "dimension": dimension,
+            })
+        if not attribution:
+            attribution = "DEFECT"
     findings.append({
         "id": fid, "kind": kind, "desc": desc,
         "request": json.dumps(complete_request_body(payload), ensure_ascii=False),
@@ -482,17 +524,17 @@ def auto_evidence(http_code=None, headers=None):
 
 
 def add_issue(desc, payload, fid="", expected="", actual="", severity="中", dimension="",
-              http_code=None, headers=None):
+              http_code=None, headers=None, attribution=""):
     ev = auto_evidence(http_code, headers)
     add_finding(fid, "缺陷", desc, payload, expected, actual, severity, "待修复",
-                dimension=dimension, **ev)
+                dimension=dimension, attribution=attribution, **ev)
 
 
 def add_observation(desc, payload, fid="", expected="", actual="", severity="中",
-                    dimension="", http_code=None, headers=None):
+                    dimension="", http_code=None, headers=None, attribution=""):
     ev = auto_evidence(http_code, headers)
     add_finding(fid, "待确认", desc, payload, expected, actual, severity, "待确认",
-                dimension=dimension, **ev)
+                dimension=dimension, attribution=attribution, **ev)
 
 
 def assert_non_empty(items, label="断言集合"):
@@ -1798,11 +1840,14 @@ def run(case_no, name, action, expect_success, category,
                     "[{}]{} 前置条件未满足（不计缺陷）：{}{}".format(
                         case_no, name, reason, _mtag),
                     payload, fid=case_no, expected="先满足前置条件再重跑该用例",
-                    actual=f"被拒绝：{errmsg}", dimension=dimension)
+                    actual=f"被拒绝：{errmsg}", dimension=dimension,
+                    attribution=("%s:先调 %s" % (att.get("category"), att.get("evidence_action"))
+                                 if att.get("evidence_action") else att.get("category")))
             else:
                 status, reason = "FAIL", f"期望成功却失败: {errmsg}"
                 add_issue(f"[{case_no}]{name}：本应成功，但实际失败：{errmsg}", payload, fid=case_no,
-                          expected="成功", actual=f"失败：{errmsg}")
+                          expected="成功", actual=f"失败：{errmsg}",
+                          attribution=att.get("category"))
     else:
         status, reason = "FAIL", f"未知result值: {result}"
         add_issue(f"[{case_no}]{name} 返回未知result值: {result}", payload, fid=case_no,

@@ -89,8 +89,10 @@ def ensure_runnable_config():
             print("⚠️ 配置一致性警告：")
             for m in warns:
                 print("   - %s" % m)
-    except ImportError:
-        pass  # 独立兜底场景（无 personal_config 模块）：缺失校验已在上面完成
+    except ImportError as _e:  # noqa: BLE001
+        # 独立兜底场景（无 personal_config 模块）：缺失校验已在上面完成。
+        # 仍要点名，否则「个人配置一致性校验整体消失」不可审计。
+        print("[config] personal_config 不可导入（%s），一致性校验跳过" % _e, file=sys.stderr)
     _CONFIG_VERIFIED = True
 
 # FAIL 后是否自动做最小复现缩减。可由执行配置 execution.minimize_findings=false 关闭
@@ -150,11 +152,26 @@ def extract_resource(parsed, action):
     return None
 
 
+def _cov_skip(case, why):
+    """检查器因输入不足无法执行时的统一留痕。
+
+    此前这些分支直接 `return`：该维度既没出缺陷，也没记「为什么没跑」，聚合层只看得到
+    「该用例跑过」——于是静默空转被当成已覆盖（漏跑被彻底盖住）。登记成 COV- 覆盖缺口，
+    与 `_check_roundtrip` / `_check_idempotent` 已有的 `fid="COV-..."` 口径一致。
+    """
+    R.add_observation("[%s] 检查未执行（记覆盖缺口）：%s" % (case.get("id"), why),
+                      case.get("params", {}), fid="COV-%s" % case.get("id"),
+                      expected="检查器应能取得所需输入", actual=why,
+                      severity="低", dimension=case.get("dimension") or "")
+
+
 def _check_contract_diff(case, parsed, args):
     documented = set(args.get("documented_fields") or [])
     data = (parsed or {}).get("data") or {}
-    if not isinstance(data, dict) or not documented:
-        return
+    if not isinstance(data, dict):
+        return _cov_skip(case, "响应 data 非对象，契约字段比对无法执行")
+    if not documented:
+        return _cov_skip(case, "契约未声明可比对字段（documented_fields 为空），无可比对项")
     actual = set(data.keys())
     missing = sorted(documented - actual)
     redundant = sorted(actual - documented)
@@ -172,8 +189,10 @@ def _check_contract_diff(case, parsed, args):
 
 def _check_field_naming(case, parsed, args):
     data = (parsed or {}).get("data") or {}
-    if not isinstance(data, dict) or not data:
-        return
+    if not isinstance(data, dict):
+        return _cov_skip(case, "响应 data 非对象，字段命名风格检查无法执行")
+    if not data:
+        return _cov_skip(case, "响应 data 为空对象，无可检查的字段名")
     ok, bad, msg = R.check_field_naming(data)
     if ok is False:
         R.add_issue("[%s] 字段命名风格不统一：%s" % (case.get("id"), msg),
@@ -213,8 +232,10 @@ def _check_structure_complete(case, parsed, args):
     """Y：嵌套结构完整性——文档声明字段逐个存在且不为 None。"""
     fields = args.get("documented_fields") or []
     data = (parsed or {}).get("data") or {}
-    if not isinstance(data, dict) or not fields:
-        return
+    if not isinstance(data, dict):
+        return _cov_skip(case, "响应 data 非对象，嵌套结构完整性检查无法执行")
+    if not fields:
+        return _cov_skip(case, "契约未声明 documented_fields，无嵌套结构可校验")
     empty = [f for f in fields if f in data and data.get(f) in (None, "", [], {})]
     if empty:
         R.add_issue("[%s] 复杂结构返回不完整（字段存在但为空）：%s" % (case.get("id"), empty),
@@ -253,7 +274,7 @@ def _check_http_semantics(case, parsed, args):
     """H：HTTP 状态码语义——400/401/403/404/409/429 必须与业务语义一致（401 与 403 混用是典型缺陷）。"""
     code = _last_result().get("http_code")
     if not code:
-        return
+        return _cov_skip(case, "未采到 HTTP 状态码，状态码语义检查无法执行")
     business_result = parsed.get("result") if isinstance(parsed, dict) else None
     semantic = args.get("semantic")
     if semantic:
@@ -295,8 +316,10 @@ def _check_roundtrip(case, parsed, args):
                 severity="低", dimension=case.get("dimension") or "B")
             return
         echoed = read_parsed.get("data") or {}
-        if not isinstance(echoed, dict) or not echoed:
-            return
+        if not isinstance(echoed, dict):
+            return _cov_skip(case, "配套读接口返回 data 非对象，往返比对无法执行")
+        if not echoed:
+            return _cov_skip(case, "配套读接口返回 data 为空，无可回写字段")
         # 配套接口匹配性探测：读回来的结构里一个主接口提交过的字段都没有，
         # 说明这个 read_action 多半不是本接口的配套读接口（自动扫描猜错的情形）。
         # 此时点名降级为"回读响应自身"，而不是拿别人的结构去做回写——
@@ -326,10 +349,10 @@ def _check_roundtrip(case, parsed, args):
             return
     # --- 退化路径：写入后回读响应自身（未给 read_action 或配套接口被判定为不匹配）---
     if not isinstance(parsed, dict):
-        return
+        return _cov_skip(case, "响应非对象，写入后回读一致性检查无法执行")
     data = parsed.get("data")
     if not isinstance(data, dict):
-        return
+        return _cov_skip(case, "响应 data 非对象，写入后回读一致性检查无法执行")
     params = case.get("params") or {}
     fields = args.get("fields")
     if not fields:
@@ -840,8 +863,11 @@ def _check_terminal_repeat(case, parsed, args):
     # W6 的「被接受=终态保护缺失」判定随之失真。与主请求同源解析。
     try:
         params = _sanitize_params(case) or params
-    except Exception:
-        pass  # 解析失败时按原始 params 继续（与旧行为一致，失败会在结果里显形）
+    except Exception as _e:  # noqa: BLE001
+        # 解析失败按原始 params 继续（与旧行为一致）——但占位符会原样发出，第二次请求
+        # 与第一次不等价，W6 的「被接受 = 终态保护缺失」判定随之失真，必须出声。
+        print("[terminal_repeat] 占位符解析失败（%s），本次按原始 params 重发，"
+              "终态判定可能失真" % _e, file=sys.stderr)
     # 第一次「终态化」由主用例完成（parsed 即其响应）；这里重复提交同参数。
     # 【三轮审查】主请求本身失败时，资源从未进入终态——第二次请求无论被拒还是成功
     # 都无法归因于终态保护（被拒可能只是主请求的失败态延续），必须先确认主请求成功。
@@ -894,10 +920,10 @@ def _check_render_degrade(case, parsed, args):
     不需要页面基线即可自动执行：文档声明返回的字段若返回 null / 空串 / 空集合，
     前端拿到的是"有键无值"，是最常见的错版与空白区域成因。"""
     if not isinstance(parsed, dict):
-        return
+        return _cov_skip(case, "响应非对象，渲染降级检查无法执行")
     data = parsed.get("data")
     if not isinstance(data, dict):
-        return
+        return _cov_skip(case, "响应 data 非对象，渲染降级检查无法执行")
     fields = args.get("fields") or []
     degraded = [f for f in fields if f in data and data.get(f) in (None, "", [], {})]
     if degraded:
@@ -1169,7 +1195,10 @@ def _minimize_on_fail(case):
     def replay(candidate):
         try:
             _code, _raw, parsed = R.call(R.build_payload(action, **candidate))
-        except Exception:
+        except Exception as _e:  # noqa: BLE001
+            # 候选重放失败 → 视作「未复现」；出声，否则最小复现缩减整体静默降级，
+            # 与「无需缩减」不可区分。
+            print("[minimizer] 候选重放失败（%s），按未复现处理" % _e, file=sys.stderr)
             return False
         if not isinstance(parsed, dict):
             return False

@@ -291,7 +291,10 @@ def find_local_dep_contract(action, near=None):
         return None
     try:
         names = sorted(os.listdir(d))
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # 目录存在但读不了：此前静默 return None，与「目录里没有匹配文件」不可区分，
+        # 依赖契约静默降级到 KB 查找。出声点名目录与原因。
+        print("[dep] 读依赖契约目录失败：%s（%s），降级到 KB 查找" % (d, exc), file=sys.stderr)
         return None
     for n in names:
         if n.lower().endswith(".md") and str(action) in n:
@@ -408,7 +411,28 @@ def build_intelligence_artifacts(contract_path, out_dir, action=None, history=No
     # 显式声明的跨接口依赖：只认契约正文白纸黑字写出的前置接口，不做相似性推断。
     # 追加进 relations（不改动上面推断出的操作类型关系），并单独落 dependencies 字段。
     dep_result = dependency_scan.annotate(model, contract_path)
-    applicability = case_generator.judge(case_generator.annotate(case_generator.load_contract(contract_path, action=action)))
+    _contract = case_generator.load_contract(contract_path, action=action)
+    _annotated = case_generator.annotate(_contract)
+    applicability = case_generator.judge(_annotated)
+    # 契约解析告警与「操作类型待确认」必须出声：两者此前都是「写了没人读」的死字段——
+    #   * parse_warnings（contract_parser 产出，注释明写「报告消费方按 parse_warnings 点名」，
+    #     而全仓消费方并不存在）：解析降级只进一次 stderr 快照、不随产物走，下游无从判断
+    #     解析出的字段可不可信；
+    #   * op_unconfirmed（applicability 只把告警写进 notes，而 notes 无任何消费方）：
+    #     操作类型没识别出来时，错向的幂等/状态机用例会成片假 FAIL，这个预警此前被静默丢弃。
+    _parse_warnings = []
+    for _src in (_contract, _annotated, applicability):
+        if isinstance(_src, dict):
+            _parse_warnings += [str(w) for w in (_src.get("parse_warnings") or [])]
+    if _parse_warnings:
+        print("[contract] 契约解析告警 %d 条（字段可信度下降，请人工核对）："
+              % len(_parse_warnings), file=sys.stderr)
+        for _w in _parse_warnings[:6]:
+            print("   - %s" % _w, file=sys.stderr)
+    if applicability.get("op_unconfirmed"):
+        print("[applicability] 操作类型待确认：接口名未命中任何操作关键词，本次按「查询」"
+              "保守出计划、E 维（终态/幂等）已降选测——错向的用例会成片假 FAIL，"
+              "请人工确认真实操作类型后重判", file=sys.stderr)
     assets = [register("contract", contract_path, trust="high")]
     if ui_baseline:
         assets.append(register("ui_baseline", ui_baseline, trust="medium"))
@@ -418,6 +442,10 @@ def build_intelligence_artifacts(contract_path, out_dir, action=None, history=No
                       dependency_unknowns=dep_result.get("unknowns"))
     plan["contract"] = model.to_dict()
     plan["contract"]["source"] = contract_path
+    # 两个死字段随产物透出（此前全仓 0 消费方，报告层无从点名；仅此还不够，
+    # 上面已同步把关键告警打到 stderr，避免"解析降级"只存在于一次日志快照里）。
+    plan["contractParseWarnings"] = _parse_warnings
+    plan["applicabilityNotes"] = list(applicability.get("notes") or [])
     # 用 asdict 而非 __dict__：关系一旦带上 evidence（Evidence 对象）就不是
     # JSON 可序列化的了。历史实现因关系证据恒为空而从未暴露此问题。
     plan["relations"] = [asdict(r) for r in model.relations]
