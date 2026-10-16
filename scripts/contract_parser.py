@@ -33,7 +33,11 @@ RESP_HINTS = ("响应参数", "响应字段", "返回参数", "输出参数", "�
 MAX_RE = re.compile(r"(?:最长|最多|不超过|长度不能超过|长度上限|最大|长度限制|长度)\s*(\d+)")
 MIN_RE = re.compile(r"(?:最短|最少|不小于|最小|至少)\s*(\d+)")
 DEF_RE = re.compile(r"默认(?:值)?(?:为|是|取)?\s*[:：]?\s*([^\s；;，,。、]+)")
-FORBID_RE = re.compile(r"不能包含\s*[“\"'‘']([^”\"'’']+)[”\"'’']")
+# 【W23】禁用词三形态：不能包含「X」/ 不得含有「X」/ 禁用词/敏感词：X
+# 引号集含中英弯引号与「」『』（角括号——客户套餐名常用角括号包裹）。
+FORBID_RE = re.compile(
+    r"(?:不能包含|不得含有|禁止包含|不允许包含)\s*[“\"'‘’「」『』]([^”\"'’「」『』]+)[“\"'‘’「」『』]"
+    r"|(?:禁用词|敏感词|违禁词)\s*[:：]?\s*([^\s；;，,。、|]+)")
 ENUM_ITEM_RE = re.compile(r"(-?\d+)\s*([一-龥A-Za-z][一-龥A-Za-z0-9_]*)")
 # 【W27】字符串枚举形态：「值只能是 A/B/C」「取值：basic,pro」——整数枚举正则抓不到，
 # 字符串枚举此前全丢（invalid_enum 不进分母、B-ENUM 不生成）。
@@ -118,7 +122,10 @@ def _parse_constraints(remark, desc=""):
     m = DEF_RE.search(text)
     if m:
         out["default"] = m.group(1).strip("。，,;；")
-    out["forbid"] = FORBID_RE.findall(text)
+    # 【W23】FORBID_RE 双捕获组（引用形态 / 词表形态）——findall 返回 tuple，
+    # 展平并去空、去重保序。
+    _fb = [next((g for g in grp if g), "") for grp in FORBID_RE.findall(text)]
+    out["forbid"] = [w for i, w in enumerate(_fb) if w and w not in _fb[:i]]
     # 枚举：形如「0网页，1海报，2PPT」——至少 2 组且值不重复才认定为枚举
     items = ENUM_ITEM_RE.findall(text)
     if len(items) >= 2:

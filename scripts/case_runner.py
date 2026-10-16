@@ -840,6 +840,15 @@ def _check_terminal_repeat(case, parsed, args):
     except Exception:
         pass  # 解析失败时按原始 params 继续（与旧行为一致，失败会在结果里显形）
     # 第一次「终态化」由主用例完成（parsed 即其响应）；这里重复提交同参数。
+    # 【三轮审查】主请求本身失败时，资源从未进入终态——第二次请求无论被拒还是成功
+    # 都无法归因于终态保护（被拒可能只是主请求的失败态延续），必须先确认主请求成功。
+    main_result = parsed.get("result") if isinstance(parsed, dict) else None
+    if main_result is not True:
+        R.add_observation(
+            "[%s] 终态重复操作无法验证：主请求未成功（result=%s），资源未进入终态，"
+            "第二次请求的拒绝不可归因于终态保护" % (case.get("id"), main_result),
+            params, fid=case.get("id"), severity="低", dimension=dim)
+        return
     code, raw, second = R.call(R.build_payload(action, **params), retries=R.RETRY_COUNT)
     second_result = second.get("result") if isinstance(second, dict) else None
     second_err = str(second.get("errormsg", "")) if isinstance(second, dict) else ""

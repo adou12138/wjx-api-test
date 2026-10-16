@@ -58,6 +58,14 @@ def base_params(contract):
     return out
 
 
+def _is_nested_path(name):
+    """字段名是否为嵌套点路径（data.items[].name / data.user.name）。
+
+    与 case_generator._is_nested_path 同口径：嵌套字段无法在顶层 base_params 上
+    安全变异，各生成器（B-MISS/B-OVER/B-NULL）统一降级 TODO 留痕。"""
+    return "." in str(name or "") or "[]" in str(name or "") or "<truncated>" in str(name or "")
+
+
 def _req_fields(contract):
     return [f for f in (contract.get("request_fields") or []) if f.get("required")]
 
@@ -207,6 +215,19 @@ def p07_gen(c, ctx):
     # 限量按字段族保代表：族内字段共享后端校验分支，按位置取前 N 会把
     # 排在后面的整个族砍掉，等于一类分支零覆盖
     for f in pick_by_family(_opt_fields(c), discovery_profile.get("null_state_fields")):
+        # 【W45 三轮审查】嵌套点路径字段（data.items[].name / <truncated> 占位）
+        # 无法在顶层 params 上安全变异：p["x.<truncated>"]=None 是字面顶层键，
+        # 发出去只会得到类型噪音失败/掩盖结构问题——降级 TODO，与 case_generator
+        # 的 B-OVER/B-MISS 守卫同源。
+        if _is_nested_path(f.get("name") or ""):
+            out.append(_mk("TODO-B-NULL-%s" % f.get("name"),
+                           "可选字段空值四态（嵌套字段，需人工构造）：%s" % f.get("name"),
+                           "B", "参数校验-空值四态", dict(ctx["base"]),
+                           {"success": True}, priority="P0",
+                           source="pattern:P07:nested", needs="manual",
+                           note="嵌套点路径字段的空值四态需人工在结构内构造，"
+                                "顶层字面键变异会产假缺陷（与 case_generator W22 守卫同源）"))
+            continue
         for label, val in (("缺失", "__OMIT__"), ("null", None), ("空串", ""), ("空数组", [])):
             p = dict(ctx["base"])
             if val == "__OMIT__":

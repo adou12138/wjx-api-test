@@ -545,14 +545,14 @@ def check_idempotent(action, payload_builder, times=2, **kwargs):
     # 【W3】先验证「接口真的在正常响应」，再谈幂等：任何一次 code=-1（连接失败），
     # 或 parsed 没有 result 键（响应非预期形状），都不具备比对前提。
     comparable = []
-    for r in results:
+    # 【三轮审查】enumerate 取代 results.index(r)：两次响应完全相同时 index 按值
+    # 查找恒返 0，「第 N 次」文案错位（不影响判定，纯文案）。
+    for idx, r in enumerate(results, 1):
         if r["code"] == -1:
-            return None, results, "第 %d 次请求连接失败(code=-1)，无法验证幂等性（归 ENV，需重跑）" % (
-                results.index(r) + 1)
+            return None, results, "第 %d 次请求连接失败(code=-1)，无法验证幂等性（归 ENV，需重跑）" % idx
         p = r["parsed"]
         if not (isinstance(p, dict) and "result" in p):
-            return None, results, "第 %d 次响应无 result 键（非 JSON/网关错误），无法验证幂等性（需确认）" % (
-                results.index(r) + 1)
+            return None, results, "第 %d 次响应无 result 键（非 JSON/网关错误），无法验证幂等性（需确认）" % idx
         comparable.append(p)
     first = comparable[0]
     all_same = all(p == first for p in comparable)
@@ -1790,10 +1790,10 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
     """【参数校验专用】断言"非法/缺失/类型错误/枚举越界 输入 → 应被【拒绝】"。
 
     B 维度（参数校验）的标准用法，专为避免"把非法输入断言成应当成功"的盲区而封装：
-      - 接口【拒绝】(result=false)  → PASS（校验生效）
-            · 给了 err_exact 且命中  → PASS，且错误语义具体（最佳）
-            · 给了 err_exact 未命中  → PASS(已拒绝) 但记一条【待确认/符合预期】观察：错误语义不具体(H2)
-            · 未给 err_exact         → PASS(已拒绝)
+      - 接口【拒绝】(result=false)  → 未断言错误文案时不能直接展放
+            · 给了 err_exact 且命中  → PASS，且错误语乙具体（最佳）
+            · 给了 err_exact 未命中  → FAIL 且记【缺陷】：错误语义与测试意图不符（与 run() 同口径）
+            · 未给 err_exact         → 待确认（高危）：无法区分目标校验生效与其它拒绝原因
       - 接口【接受】(result=true)   → FAIL 且记【缺陷(参数校验缺失)】：非法/缺失输入不应被接受
 
     ⚠️ 不要用 run(..., expect_success=True) 测非法输入——那会把"接口没做校验"误判成"测试通过"。
@@ -2219,6 +2219,13 @@ def main():
               f"{str(r['http_code']):<5}{r['status']:<6}{r['reason']}")
     print("-" * 70)
     print(f"总计 {len(results)} 项 | 通过 {passed} | 失败 {failed} | ENV/网络异常 {errored} | N/A(不适用) {na}")
+    # 【W10 口径落地】PRECONDITION_UNMET 单列分栏：它计入 executed（发了请求拿到
+    # 响应的宽松口径），但不计入通过率分子（严格口径）——两口径差异必须可见，
+    # 否则报告读者把「被前置挡住的用例」误读成通过或失败。
+    n_precond = sum(1 for r in results if r["status"] == _ATTR.PRECONDITION_UNMET)
+    if n_precond:
+        print(f"其中 前置条件未满足 {n_precond} 项（已计入覆盖率分母[宽松口径]，"
+              f"不计入通过率[严格口径]；case_coverage 只数 PASS/FAIL，两口径差异即此）")
     n_defect = sum(1 for x in findings if x["kind"] == "缺陷")
     n_obs = sum(1 for x in findings if x["kind"] == "待确认")
     n_env = sum(1 for x in findings if x["kind"] == "环境风险")
