@@ -60,6 +60,16 @@ ENCODING_SAMPLES = [
 _ENC_NOTE = ("编码样本由生成器注入，预期应被正确处理（存储/回显不乱码、不被截断）。"
              "若字段业务上限制字符集（如仅英文账号名），被拒属符合预期，记「待确认」而非缺陷")
 
+# note 承诺「被拒记待确认」要由执行器兑现：api_test_runner 的容忍分支只在
+# expect.tolerate_reject 非空且错误信息命中关键词时按「符合预期」结算。少了这个 key，
+# 上面两处 note 就是空承诺——限制字符集的字段被拒会直接判 FAIL 并进缺陷台账。
+# 关键词刻意收窄到「明确的业务限制」语义，避免把过度校验（B8）这类真缺陷吞掉。
+_REJECT_COMMON = ("不支持", "不允许", "禁止", "非法", "未通过")
+ENC_TOLERATE_REJECT = list(_REJECT_COMMON) + [
+    "字符集", "编码", "格式", "非法字符", "特殊字符", "内容", "字符"]
+BATCH_TOLERATE_REJECT = list(_REJECT_COMMON) + [
+    "数量", "条数", "上限", "最多", "批量", "不能超过", "超出", "一次性"]
+
 
 def gen_encoding_cases(contract, base, action):
     """I 维度：对每个字符串字段注入中文与 emoji，再对首个字段补全角与 RTL。
@@ -77,7 +87,8 @@ def gen_encoding_cases(contract, base, action):
             p[f["name"]] = val
             out.append(_mk("I-ENC-%s-%s" % (tag, f["name"]),
                            "编码国际化：%s=%s（%s）" % (f["name"], val[:12], desc),
-                           "I", "编码国际化", p, {"success": True},
+                           "I", "编码国际化", p,
+                           {"success": True, "tolerate_reject": ENC_TOLERATE_REJECT},
                            action=action, priority="P2", tier="probe",
                            source="generator:encoding", note=_ENC_NOTE))
     first = fs[0]
@@ -86,7 +97,8 @@ def gen_encoding_cases(contract, base, action):
         p[first["name"]] = val
         out.append(_mk("I-ENC-%s-%s" % (tag, first["name"]),
                        "编码国际化：%s=%s（%s）" % (first["name"], val[:12], desc),
-                       "I", "编码国际化", p, {"success": True},
+                       "I", "编码国际化", p,
+                       {"success": True, "tolerate_reject": ENC_TOLERATE_REJECT},
                        action=action, priority="P2", tier="probe",
                        source="generator:encoding", note=_ENC_NOTE))
     return out
@@ -175,7 +187,8 @@ def gen_batch_cases(contract, base, action):
     p = dict(base)
     p[f["name"]] = ["item_%d" % i for i in range(100)]
     out.append(_mk("X-BATCH-01", "批量操作：%s 传入 100 条（应被接受或明确拒绝，不得超时/部分静默）"
-                   % f["name"], "X", "批量操作", p, {"success": True},
+                   % f["name"], "X", "批量操作", p,
+                   {"success": True, "tolerate_reject": BATCH_TOLERATE_REJECT},
                    action=action, priority="P2", source="generator:batch",
                    note="批量上限是业务约定：超限被拒属符合预期；"
                         "被接受但只处理了一部分且无提示才是缺陷"))

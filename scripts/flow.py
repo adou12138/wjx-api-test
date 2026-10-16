@@ -510,6 +510,21 @@ def main():
         intelligence["plan_path"], intelligence["risk"]["score"], intelligence["risk"]["level"]))
     doc = case_generator.generate(contract_path, args.action, llm_facts=args.llm_facts)
 
+    # AF 半接线防护：applicability 在 WJX_WITH_BUSINESS 开启时把 AF 列进必测
+    # （applicability.py:181），但主生成链不含 business_scenarios——不处理就会让
+    # 覆盖率门禁每轮报一条 AF 假缺口，看起来像流程坏了。
+    if "AF" in (doc.get("coverage_plan") or []):
+        af_live = [c for c in (doc.get("cases") or [])
+                   if str(c.get("dimension") or "").startswith("AF") and c.get("enabled")]
+        if not af_live:
+            sys.stderr.write(
+                "警告：AF 已列入必测（WJX_WITH_BUSINESS 开启），但主链路不生成 AF 用例，"
+                "覆盖率门禁将报 AF 缺口。\n"
+                "  两条路：① 跑 business_scenarios 三步（SKILL.md「业务场景补充」）"
+                "让 AF 用例真正上链；\n"
+                "  ② 本轮不启用大模型链路时，用 case_coverage "
+                "--exempt-categories \"AF:原因\" 显式豁免。\n")
+
     cases_path = os.path.join(args.out_dir, "generated_cases.json")
     with open(cases_path, "w", encoding="utf-8") as f:
         json.dump(doc, f, ensure_ascii=False, indent=2)
