@@ -214,7 +214,8 @@ def p07_gen(c, ctx):
     out = []
     # 限量按字段族保代表：族内字段共享后端校验分支，按位置取前 N 会把
     # 排在后面的整个族砍掉，等于一类分支零覆盖
-    for f in pick_by_family(_opt_fields(c), discovery_profile.get("null_state_fields")):
+    for f in pick_by_family(_opt_fields(c), discovery_profile.get("null_state_fields"),
+                            warnings=ctx.get("gen_warnings")):
         # 【W45 三轮审查】嵌套点路径字段（data.items[].name / <truncated> 占位）
         # 无法在顶层 params 上安全变异：p["x.<truncated>"]=None 是字面顶层键，
         # 发出去只会得到类型噪音失败/掩盖结构问题——降级 TODO，与 case_generator
@@ -550,7 +551,8 @@ def s4_gen(c, ctx):
     fs = c.get("response_fields") or []
     absolute = [f for f in fs if is_absolute_url(f)]
     out = []
-    for i, f in enumerate(pick_by_family(absolute, discovery_profile.get("url_fields")), 1):
+    for i, f in enumerate(pick_by_family(absolute, discovery_profile.get("url_fields"),
+                                         warnings=ctx.get("gen_warnings")), 1):
         out.append(_mk("C%02d" % i, "响应 URL 字段语义有效性（真能打开）：%s" % f["name"],
                        "C", "字段语义真值", dict(ctx["base"]), {"success": True},
                        check="url_alive", check_args={"field": f["name"]},
@@ -672,7 +674,9 @@ def ui1_gen(c, ctx):
     str_fields.sort(key=lambda f: 0 if any(h in f["name"].lower() for h in rich_hint) else 1)
     # 目标字段同样按族选：两个名额优先给不同族（如 html_content 与 title），
     # 而不是把两个名额花在同族的两个字段上
-    targets = [f["name"] for f in pick_by_family(str_fields, discovery_profile.get("ui_proxy_fields"))] \
+    targets = [f["name"] for f in pick_by_family(
+        str_fields, discovery_profile.get("ui_proxy_fields"),
+        warnings=ctx.get("gen_warnings"))] \
         or ([fields[0]["name"]] if fields else [])
     resp_fields = [f["name"] for f in (c.get("response_fields") or [])]
     cases = []

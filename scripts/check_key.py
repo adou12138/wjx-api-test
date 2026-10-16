@@ -125,12 +125,15 @@ def _strip_dup_suffix(cid):
     return cid
 
 
-def required_checks(contract):
+def required_checks(contract, warnings=None):
     """从契约机械算出「必须被用例兑现」的约束全集（门禁分母）。
 
     只看契约白纸黑字声明的约束：required / type / max_len / min_len /
     enum / nullable。契约没声明的一律不进分母——猜测出来的约束会变成
     永远无法兑现的假缺口，那正是本模块要防的失败模式。
+
+    【审查修复·纯函数】本函数是纯计算（契约进、约束全集出），warnings 传 list
+    时把字段族退化告警收集进去供调用方决定是否输出——本函数自己不写 stderr。
     """
     out = []
     fields = list(contract.get("request_fields") or [])
@@ -142,7 +145,7 @@ def required_checks(contract):
     from field_semantics import pick_by_family  # 局部导入：field_semantics 不依赖本模块，无环
     _null_selected = {f.get("name") for f in pick_by_family(
         [f for f in fields if not f.get("required")],
-        discovery_profile.get("null_state_fields"))} if any(
+        discovery_profile.get("null_state_fields"), warnings=warnings)} if any(
         not f.get("required") for f in fields) else set()
     for f in fields:
         name = str(f.get("name") or "").strip()
@@ -270,13 +273,17 @@ def assign_keys(cases):
     return cases
 
 
-def reconcile(cases, contract):
+def reconcile(cases, contract, warnings=None):
     """对账：契约约束全集 vs 用例已兑现集合。
 
     返回 dict：required（约束全集）/ delivered（已兑现）/ missing（缺口）。
     missing 即「契约声明了、但没有任何用例去兑现」的约束——静默缺口。
+
+    【审查修复·纯函数】warnings 传 list 时把字段族退化告警收集进去（见
+    required_checks），本函数与 required_checks 都不自行输出，由调用方决定
+    打印还是落产物。
     """
-    required = required_checks(contract)
+    required = required_checks(contract, warnings=warnings)
     delivered = set()
     for c in cases or []:
         k = c.get("check_key") or derive_key(c)

@@ -56,9 +56,11 @@ RULES = [
 ]
 
 # 【W48 排除表】字段名包含这些词时，即使正则命中也摘掉对应标签（伪 URL/伪计数）。
+# 【审查修复·去重】count 项此前把 page_num 写了两遍（未复核的疏漏，功能无影响但
+# 表明这张表没被逐条看过）；已逐项核对全表，仅此一处重复。
 SEMANTIC_EXCLUDES = {
     "url": ("链接编号", "短链接", "链接id", "linkid", "link_id"),
-    "count": ("page_num", "page_num", "pagenum"),
+    "count": ("page_num", "pagenum"),
 }
 
 # 具体标签压掉泛化标签。左侧更具体，右侧被摘除。
@@ -213,7 +215,7 @@ def field_family(f):
     return "name:" + n
 
 
-def pick_by_family(fields, n):
+def pick_by_family(fields, n, warnings=None):
     """字段族限额选择：先让每个族至少一个代表入选，配额有余再按原序补齐。
 
     直接取前 N 的问题：排在前面的族往往字段形态相近（比如一排 id），
@@ -222,8 +224,15 @@ def pick_by_family(fields, n):
 
     【W28 退化可审计】字段无 stem/语义标签时 field_family 返回 "name:<字段名>"
     （每字段自成一族），"每族一个代表"退化成"按原序取前 N"——docstring 声称要
-    避免的行为。改为：检测到退化（name: 族占比过高）时向 stderr 告警并返回
-    被砍字段清单（调用方在报告留痕），让"谁被静默砍掉"可审计。
+    避免的行为。
+
+    【审查修复·纯函数】本函数此前直接 sys.stderr.write 告警：它是个纯计算
+    （输入字段与配额，输出选中的字段），调用方无法控制输出、去重、归档，
+    安静模式（只想要结果）下也照样污染日志。改为：**显式传入收集器**
+    ``warnings``（list）时把退化告警写进该 list，返回值仍是选中的字段。
+    不传收集器则完全静默——是否出声由调用方决定。
+    需要落日志的调用方在自己的输出层统一 emit（见 pattern_engine.run /
+    case_generator 生成入口），那里本就有 stderr 通道与报告产物。
     """
     fields = list(fields)
     if len(fields) <= n:
@@ -244,11 +253,10 @@ def pick_by_family(fields, n):
     dropped = [fields[i] for i in sorted(set(range(len(fields))) - picked)]
     # 【W28】退化检测：name: 族（无任何语义线索）超过半数且确有丢弃 → 告警
     name_fam_count = sum(1 for k in fams if k.startswith("name:"))
-    if name_fam_count >= max(1, len(fams) // 2) and dropped:
-        import sys as _sys
-        _sys.stderr.write(
-            "[field_semantics] pick_by_family 退化：%d/%d 个字段无语义标签（name: 自成一族），"
-            "限额 %d 退化为按位置取前 N；被砍字段：%s（请人工确认或补语义标签）\n"
+    if warnings is not None and name_fam_count >= max(1, len(fams) // 2) and dropped:
+        warnings.append(
+            "pick_by_family 退化：%d/%d 个字段无语义标签（name: 自成一族），"
+            "限额 %d 退化为按位置取前 N；被砍字段：%s（请人工确认或补语义标签）"
             % (name_fam_count, len(fams), n,
                ",".join(str(d.get("name")) for d in dropped[:10])))
     return [fields[i] for i in sorted(picked)]

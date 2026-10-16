@@ -870,6 +870,17 @@ def _check_terminal_repeat(case, parsed, args):
         return
     # 第二次被拒绝 = 终态保护生效。附一条幂等旁证比对（保留旧能力，不改变判定）。
     ok, _results, msg = R.check_idempotent(action, lambda: dict(params), times=2)
+    if ok is None:
+        # 【审查修复·返回值只改了一半调用方】W3 让 check_idempotent 用 None 表示
+        # 「不具备判定前提」（连接失败 / 响应缺 result）。本调用方此前只判
+        # `ok is False`，None 会一路穿过去落到 if 之外 —— 既不记观察也不判定，
+        # 这次旁证比对就此静默消失（与 _check_idempotent 的 None 处理不一致）。
+        # 统一口径：None → 留痕不判定，与本函数上方「无法验证」及
+        # _check_idempotent 的处理一致。
+        R.add_observation(
+            "[%s] 终态重复操作的幂等旁证无法验证：%s" % (case.get("id"), msg),
+            params, fid=case.get("id"), severity="低", dimension=dim)
+        return
     if ok is False:
         R.add_observation(
             "[%s] 终态重复操作未幂等：%s（终态保护已生效，此条为幂等语义旁证）"
@@ -1317,7 +1328,10 @@ def exec_case(case, dry=False):
                              dimension=dim,
                              tolerate_reject=expect.get("tolerate_reject"),
                              # 【W51 配套】check 透传给 run()：深度校验用例不计浅用例。
-                             check=check or None,
+                             # 【审查修复·参数改名】run() 的该控制参数由 check 改名
+                             # check_mode——check 是常见业务字段名，占用它会让带
+                             # check 字段的用例在调用处 TypeError 崩链。
+                             check_mode=check or None,
                              **params)
     else:
         parsed, _ = R.assert_validation(cid, name, action, err_exact=expect.get("err_keywords"),

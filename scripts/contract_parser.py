@@ -45,8 +45,35 @@ STR_ENUM_RE = re.compile(
     r"(?:只能(?:是|为)|取值(?:范围)?(?:为|是|[:：])?|可选值[:：]?)\s*[:：]?\s*"
     r"([A-Za-z][A-Za-z0-9_]*(?:\s*[/,，、]\s*[A-Za-z][A-Za-z0-9_]*){1,})")
 # 【W27】required 真值集合扩充：√ * 必须 yes 等非常规标记此前全漏（B-MISS 不生成）。
+# 归一后按**集合**判定，见 _norm_required_truthy——集合在导入期算一次，运行期只查表。
 REQUIRED_TRUTHY = ("是", "Y", "y", "true", "True", "TRUE", "必填", "1",
                    "√", "✓", "*", "＊", "必须", "yes", "Yes", "YES", " required", "Required")
+
+# 必填列里可能出现的「纯标记符号」——文档常用一串星号/对勾表示必填，
+# 长度不固定（* / ** / *** / √√ 都是同一个意思）。
+# 归一时前后都剥掉：`**` 剥完是空串，必须单独承认「剥空 = 全是标记 = 必填」，
+# 否则 rstrip 把 `**` 削成 "" 落进非必填，B-MISS 不生成且对账分母少算（漏测）。
+_REQ_MARKS = "*＊√✓✔✅"
+_REQ_TRUTHY_SET = frozenset(t.strip() for t in REQUIRED_TRUTHY if t.strip())
+
+
+def _norm_required_truthy(req_raw):
+    """必填列归一判定：容忍标记符号在前后任意位置、任意重复。
+
+    旧实现 `req_raw.strip().rstrip("*＊") in REQUIRED_TRUTHY` 有两个洞：
+      ① `**` / `***` 被 rstrip 削成空串 → 空串不在真值表 → 判非必填；
+      ② `*是`（星号在前）rstrip 不处理 → 判非必填。
+    正确口径：剥掉前后所有标记符号后，剩下的文本按集合判定；
+    剥完为空但原串非空（说明原串全是标记）时，同样判必填。
+    """
+    s = (req_raw or "").strip()
+    if not s:
+        return False
+    core = s.strip(_REQ_MARKS).strip()
+    if not core:
+        # 原串非空而剥完为空 → 原串整体就是标记符号（**/***/√√…），语义为必填
+        return True
+    return core in _REQ_TRUTHY_SET
 ACTION_RE = re.compile(r"\[\s*(\d{4,})\s*\]")
 ACTION_BODY_RE = re.compile(r"(?:动作标识|action)\s*(?:编号|ID|id)?\s*(?:为|是|=|:|：)?\s*[`'\"]?(\d{4,})", re.I)
 URL_RE = re.compile(r"https?://[^\s`\"'）)、,，]+")
@@ -156,10 +183,10 @@ def _mk_field(cells, header):
     desc = _pick(cells, i_desc)
     req_raw = _pick(cells, i_req)
     # 【W27】required 真值集合扩充：√/*/*＊/必须/yes 等非常规标记此前全漏
-    # （B-MISS 不生成、对账分母少算）。归一后判断，strip 已在 _pick 完成。
-    required = req_raw.strip().rstrip("*＊") in tuple(
-        t.strip() for t in REQUIRED_TRUTHY) or req_raw.strip() in ("*", "＊") \
-        or req_raw.strip() in REQUIRED_TRUTHY
+    # （B-MISS 不生成、对账分母少算）。归一后按集合判定，strip 已在 _pick 完成。
+    # 【审查修复】标记符号前后都可能有且可重复（`**`/`***`/`√√`/`*是`），
+    # 交由 _norm_required_truthy 统一处理。
+    required = _norm_required_truthy(req_raw)
     cons = _parse_constraints(remark, desc)
     return {
         "name": name,
@@ -176,9 +203,15 @@ def _mk_field(cells, header):
     }
 
 
-def _extract_json_blocks(text, _with_pos=None):
+def _extract_json_blocks(text, _with_pos=None, _warn=None):
     """提取 ```json 代码块。_with_pos 传 list 时顺带收集 (start_offset, block)，
-    供 W46 的「示例按最近标题归属」消费（此前该属性从未被写入，归属修复是死代码）。"""
+    供 W46 的「示例按最近标题归属」消费（此前该属性从未被写入，归属修复是死代码）。
+
+    【审查修复】_warn 传 list 时收集**畸形块**（json.loads 失败）留痕——旧实现
+    裸 `except: continue` 静默丢弃，调用方声明的 _warn_json_blocks 从未被写入：
+    契约里写坏的示例块既不进 stderr 也不进 parse_warnings，读报告的人以为
+    「文档没写示例」，实际是「写了但解析不了」。两种情况排查方向完全不同。
+    """
     blocks = []
     for m in re.finditer(r"```(?:json|JSON)?\s*(.*?)```", text, re.S):
         raw = _unescape(m.group(1)).strip()
@@ -186,12 +219,47 @@ def _extract_json_blocks(text, _with_pos=None):
             continue
         try:
             blk = json.loads(raw)
-        except Exception:
+        except Exception as exc:
+            if _warn is not None:
+                _warn.append("示例 JSON 块解析失败（第 %d 字偏移，%s）：%s"
+                             % (m.start(), type(exc).__name__, raw[:60].replace("\n", " ")))
             continue
         blocks.append(blk)
         if _with_pos is not None:
             _with_pos.append((m.start(), blk))
     return blocks
+
+
+def _nearest_example_side(seg):
+    """判定示例块归属请求侧还是响应侧：**取 seg 中各标题最后一次出现的位置比谁更近**。
+
+    【审查修复】旧判定是「窗口内含任一响应词，且不含任一请求词」。W46 给
+    REQ_HINTS 加了「请求示例」、给 RESP_HINTS 加了「响应示例」之后，两个示例块
+    相距 400 字以内时，响应块前的窗口**必然包含前面的「请求示例」标题** →
+    `not any(REQ_HINTS)` 恒为 False → 响应示例永远抓不到，随后又被
+    `elif not req_ex` 静默吞掉。整窗口包含判定在标题相邻时结构上必然失效。
+
+    改为比较「最后一个请求标题位置」与「最后一个响应标题位置」，谁更靠后谁更近：
+      · 两个标题都没出现 → None（交给调用方走顺序兜底）
+      · 只有一侧出现   → 那一侧（块前最近的那个标题就是它的归属声明）
+      · 两侧都出现     → 取位置更靠后的那个（即离本块最近的标题）
+    """
+    last_req = last_resp = -1
+    for h in REQ_HINTS:
+        i = seg.rfind(h.lower())
+        if i > last_req:
+            last_req = i
+    for h in RESP_HINTS:
+        i = seg.rfind(h.lower())
+        if i > last_resp:
+            last_resp = i
+    if last_req < 0 and last_resp < 0:
+        return None
+    if last_req < 0:
+        return "resp"
+    if last_resp < 0:
+        return "req"
+    return "resp" if last_resp > last_req else "req"
 
 
 def parse_showdoc(text, source="", action=None):
@@ -240,33 +308,37 @@ def parse_showdoc(text, source="", action=None):
 
     # 【W46】示例归属按「最近标题」而非纯下标：块前最近的 请求/响应 关键词决定归属。
     # _extract_json_blocks 同趟收集位置（旧实现挂函数属性从未被写入——死代码）。
+    # 【审查修复】畸形 JSON 块同趟留痕进 _warn_json_blocks（此前声明后从未被写入）。
     _pos = []
-    blocks = _extract_json_blocks(text, _with_pos=_pos)
+    blocks = _extract_json_blocks(text, _with_pos=_pos, _warn=_warn_json_blocks)
     req_ex, resp_ex = {}, {}
     for start, blk in _pos:
         seg = text[max(0, start - 400):start].lower()
-        is_resp_ex = any(h.lower() in seg for h in RESP_HINTS) and not any(
-            h.lower() in seg for h in REQ_HINTS)
-        if is_resp_ex and not resp_ex:
+        side = _nearest_example_side(seg)
+        if side == "resp" and not resp_ex:
             resp_ex = blk
-        elif not req_ex:
+        elif side == "req" and not req_ex:
+            req_ex = blk
+        elif not req_ex and not resp_ex:
+            # 归属不明：按出现顺序兜底（先到先得），不静默丢弃
             req_ex = blk
     # 回退：带标题归属一无所获时按旧下标约定（第 1 块请求、第 2 块响应）
     if not req_ex and not resp_ex:
         req_ex = blocks[0] if len(blocks) > 0 else {}
         resp_ex = blocks[1] if len(blocks) > 1 else {}
-    if _warn_no_heading_table:
+    _all_warnings = list(_warn_no_heading_table) + list(_warn_json_blocks)
+    if _all_warnings:
         import sys as _sys
         _sys.stderr.write("[contract_parser] %s：%s\n" % (
             action or name or "未命名接口",
-            "；".join(str(w) for w in _warn_no_heading_table[:4])))
+            "；".join(str(w) for w in _all_warnings[:4])))
     return {
         "action": action, "name": name, "endpoint": endpoint,
         "request_fields": req_fields, "response_fields": resp_fields,
         "request_example": req_ex if isinstance(req_ex, dict) else {},
         "response_example": resp_ex if isinstance(resp_ex, dict) else {},
         # 【W46/W47】解析告警随产物透出（报告消费方按 parse_warnings 点名）
-        "parse_warnings": [str(w) for w in _warn_no_heading_table[:6]],
+        "parse_warnings": [str(w) for w in _all_warnings[:6]],
         "source": source, "format": "showdoc",
     }
 

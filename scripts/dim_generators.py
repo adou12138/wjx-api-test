@@ -10,7 +10,8 @@
    造出来的是噪音，且会让「该维度已覆盖」变成假象。
 2. **预期说不清的不硬判**——如「父级不存在」在某些业务里合法（顶级节点），
    这类用例统一 P2 + note 说明「业务允许则记符合预期」，不制造假缺陷。
-3. **条数受控**——每个命中维度 2 条，编码类按字符串字段数 × 2 + 2 条全局。
+3. **条数受控**——每个命中维度 2 条，编码类为字符串字段数 × 4
+   （每字段：中文 / emoji / 全角 / RTL 各一条，四类编码陷阱逐字段全覆盖）。
 """
 import re
 
@@ -72,19 +73,23 @@ BATCH_TOLERATE_REJECT = list(_REJECT_COMMON) + [
 
 
 def gen_encoding_cases(contract, base, action):
-    """I 维度：对每个字符串字段注入中文与 emoji；全角与 RTL 按**字段轮换**覆盖。
+    """I 维度：每个字符串字段都注入四类编码样本（中文 / emoji / 全角 / RTL）。
 
     分层为 probe——它是「字段 × 编码样本」遍历，探测的是编码处理链路是否存在，
     不代表业务场景被测过。
     【W49 反漏测】全角/RTL 此前只测首个字符串字段——后端可能按字段分别做编码
-    处理（title 走净化、remark 不走），首字段全绿不代表其余字段。改为：全角与
-    RTL 两类样本按字段序轮换（字段 i 拿样本 [2 + i % 2]），其余字段的编码分支
-    也被触达；字段只有 1 个时行为与旧版一致。
+    处理（title 走净化、remark 不走），首字段全绿不代表其余字段。
+    【审查修复·轮换退化】旧实现按 `ENCODING_SAMPLES[2 + i % 2]` 轮换，len=4 时
+    退化为「每字段只拿 1 条、且恒在 FULLWIDTH/RTL 之间二选一」：字段数=1 时
+    RTL 这一类编码陷阱**直接消失**（docstring 明列的四类少一类），字段数=3 时
+    首字段拿不到 RTL。轮换的语义是「覆盖」，不是「二选一」——改为每个字段都跑
+    全角与 RTL 两类样本，单字段时两类都在。
     """
     out = []
     fs = _str_fields(contract)
     if not fs:
         return out
+    # 前两类（多字节 / 代理对）对每个字段都跑——这两类是主路径，历史上从未轮换过。
     for f in fs:
         for tag, val, desc in ENCODING_SAMPLES[:2]:
             p = dict(base)
@@ -95,17 +100,19 @@ def gen_encoding_cases(contract, base, action):
                            {"success": True, "tolerate_reject": ENC_TOLERATE_REJECT},
                            action=action, priority="P2", tier="probe",
                            source="generator:encoding", note=_ENC_NOTE))
-    # 【W49】全角/RTL 轮换：字段 i 取样本 [2 + i % 2]
+    # 【W49】全角/RTL：每个字段都两类都跑（不再二选一），保证单字段契约也不漏 RTL。
     for i, f in enumerate(fs):
-        tag, val, desc = ENCODING_SAMPLES[2 + (i % (max(1, len(ENCODING_SAMPLES) - 2)))]
-        p = dict(base)
-        p[f["name"]] = val
-        out.append(_mk("I-ENC-%s-%s" % (tag, f["name"]),
-                       "编码国际化：%s=%s（%s，字段轮换 %d/%d）" % (f["name"], val[:12], desc, i + 1, len(fs)),
-                       "I", "编码国际化", p,
-                       {"success": True, "tolerate_reject": ENC_TOLERATE_REJECT},
-                       action=action, priority="P2", tier="probe",
-                       source="generator:encoding", note=_ENC_NOTE + "；全角/RTL 按字段轮换覆盖（W49）"))
+        for tag, val, desc in ENCODING_SAMPLES[2:]:
+            p = dict(base)
+            p[f["name"]] = val
+            out.append(_mk("I-ENC-%s-%s" % (tag, f["name"]),
+                           "编码国际化：%s=%s（%s，字段 %d/%d）"
+                           % (f["name"], val[:12], desc, i + 1, len(fs)),
+                           "I", "编码国际化", p,
+                           {"success": True, "tolerate_reject": ENC_TOLERATE_REJECT},
+                           action=action, priority="P2", tier="probe",
+                           source="generator:encoding",
+                           note=_ENC_NOTE + "；全角与 RTL 两类样本对每个字段都覆盖（W49）"))
     return out
 
 
@@ -326,24 +333,38 @@ def _domain_dim_resolve(contract):
             continue
         hit = None
         for f in (contract.get("request_fields") or []):
-            if any(t in (f.get("name") or "").lower() for t in tokens):
+            if any(tk in (f.get("name") or "").lower() for tk in tokens):
                 hit = f
                 break
-        # token 命中了（响应侧字段名或接口名），但请求侧没有可传参的字段
+        if hit:
+            res[dim] = {"hit": hit, "via_role": False, "reason": None}
+            continue
+        # 请求侧没有可传参的字段，但 token 命中了（响应侧字段名或接口名）。
         # 【W50 反误导归因】零产出原因要区分命中源：接口名命中（name_hit）时
         # 标 RESPONSE_SIDE_ONLY 是错的——接口名命中往往意味着「功能存在但本接口
         # 只是其入口之一」，正确解释是 NAME_HIT_ONLY（建议查关联接口），误导归因
         # 会让排查方向整个跑偏。
-        if hit:
-            res[dim] = {"hit": hit, "via_role": False, "reason": None}
-            continue
-        if any(t in (f.get("name") or "").lower()
-               for f in (contract.get("response_fields") or [])
-               for t in tokens):
-            reason = REASON_RESPONSE_SIDE_ONLY
-        elif any(t in iname for t in tokens):
+        # 【审查修复·命中源优先级】两者同时命中时旧实现永远走响应侧分支（先判
+        # 响应字段名），恰好在最需要区分的场景失效。改为接口名优先：接口名命中
+        # 说明整个接口族都与该维度相关，响应字段名命中只是「本接口恰好返回了它」。
+        # 推导式变量用 rf/tk，避免与上方循环变量 f / token 遮蔽同名的可读性坑。
+        name_hit = any(tk in iname for tk in tokens)
+        resp_name_hit = any(tk in (rf.get("name") or "").lower()
+                            for rf in (contract.get("response_fields") or [])
+                            for tk in tokens)
+        if name_hit:
             reason = REASON_NAME_HIT_ONLY
+        elif resp_name_hit:
+            reason = REASON_RESPONSE_SIDE_ONLY
         else:
+            # 理论不可达：进入本分支前已用 `any(t in text ...)` 保证过 token 命中，
+            # 而 text = 全部字段名 + 接口名。留告警而不是静默给个猜测归因——
+            # 归因错了排查方向就跑偏，宁可出声。
+            import sys as _sys
+            _sys.stderr.write(
+                "[dim_generators] %s 归因异常：token %s 命中判定与命中源判定不一致"
+                "（name_hit=%s, resp_name_hit=%s），按响应侧归因兜底，请人工确认\n"
+                % (dim, tokens, name_hit, resp_name_hit))
             reason = REASON_RESPONSE_SIDE_ONLY
         res[dim] = {"hit": None, "via_role": False, "reason": reason}
     return res

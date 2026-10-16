@@ -258,27 +258,36 @@ def apply_extracts(extracts: dict | None, ctx: Ctx, parsed) -> None:
             ctx.set(out_key, val if not isinstance(prev, int) or not isinstance(val, str) else type(prev)(val))
 
 
-def run_pre(step: dict, cfg: dict, ctx: Ctx, call, dry: bool) -> None:
+def run_pre(step: dict, cfg: dict, ctx: Ctx, call, dry: bool) -> list[dict]:
     """执行前置步骤：为依赖接口准备上下文（如先创建部门再修改部门）。
 
     retry_until 用于「创建后需等待才能查到」的最终一致性场景：
     轮询直到指定路径有值，或达到 max 次为止。
+
+    【审查修复·非静默】此前本函数对「连接失败 / 响应非 dict」**完全静默**：
+    parsed 不是 dict 时既不进 isinstance 分支、也不落任何记录，循环空转结束
+    后直接返回——调用方（run 主循环）看不出前置到底跑没跑通，只能看到后续用例
+    因缺配置被跳过，排查时第一现场（前置为什么没成功）已经丢了。
+    改为返回结构化留痕记录 [{step, reason, attempts, http, resp}]，
+    由调用方并入结果行；同时对每次异常响应写 stderr，不让「前置没跑通」无声消失。
+
+    返回值语义：空列表 = 前置成功（或 dry-run 未执行）；非空 = 未能成功，需留痕。
     """
     if dry:
-        return
+        return []
     action = str(step.get("action"))
     params = render(step.get("params") or {}, ctx, cfg)
     retry = step.get("retry_until") or {}
     tries = max(1, int(retry.get("max") or 1))
     for i in range(tries):
-        _, parsed, _ = call(action, params, step.get("endpoint"))
+        http, parsed, _raw = call(action, params, step.get("endpoint"))
         if isinstance(parsed, dict):
             if retry and get_path(parsed, retry.get("path") or "") is not None:
                 apply_extracts(step.get("extracts"), ctx, parsed)
-                return
+                return []
             if not retry and parsed.get("result"):
                 apply_extracts(step.get("extracts"), ctx, parsed)
-                return
+                return []
             # 【W40】失败响应不得 apply_extracts：失败体里的空值/错误结构写入 ctx
             # 会污染所有下游依赖用例（拿到 "id": null 之类假值继续跑，错误面目全非）。
             # 【二轮审查修复】retry 场景下「path 未就绪」不是终局——继续轮询剩余次数
@@ -287,11 +296,30 @@ def run_pre(step: dict, cfg: dict, ctx: Ctx, call, dry: bool) -> None:
             # 已到最后一次时才按失败收场。
             is_last = i >= tries - 1
             if not retry or is_last:
-                print("[pre] %s 前置失败（result=false 或未达 retry_until.path），"
-                      "跳过 extracts，依赖本步骤的用例将按缺配置跳过" % action)
-                return
+                # 两种收场原因不同，留痕要能分辨：非 retry 场景是业务失败；
+                # retry 场景是轮询用尽仍未就绪（最终一致性没等到）。
+                reason = ("retry_until 轮询 %d 次仍未就绪（path=%s）"
+                          % (tries, retry.get("path") or "")
+                          if retry else "前置业务失败（result=false）")
+                print("[pre] %s 前置失败（%s），"
+                      "跳过 extracts，依赖本步骤的用例将按缺配置跳过" % (action, reason))
+                return [{"step": step, "reason": reason,
+                         "attempts": i + 1, "http": http,
+                         "resp": _s(parsed.get("errormsg") or parsed.get("errmsg") or "")[:200]}]
+        else:
+            # 连接失败 / 网关返回非 JSON：此前此处直接静默空转，前置为何没成功无处可查。
+            # 留痕 + stderr，且**不 apply_extracts**（同上，失败体不可信）。
+            is_last = i >= tries - 1
+            if not retry or is_last:
+                sys.stderr.write(
+                    "[pre] 前置 %s 响应非 dict（连接失败或响应非 JSON，HTTP=%s），"
+                    "前置未成功：依赖本步骤的用例将按缺配置跳过\n" % (action, http))
+                return [{"step": step, "reason": "前置连接失败或响应非 JSON",
+                         "attempts": i + 1, "http": http, "resp": _s(_raw)[:200]}]
         if i < tries - 1:
             time.sleep(float(retry.get("sleep") or 0.5))
+    # 走到这里逻辑上不可达（最后一次迭代的两个分支都 return），保留 return 只是
+    # 兜住未来改动；真要在此留痕请先确认不会与上面两条重复记账。
 
 
 
@@ -549,6 +577,8 @@ def main() -> int:
         return http_post(url, payload, timeout, ctx_ssl)
 
     results: list[dict] = []
+    # 【审查修复·非静默】前置未成功的结构化留痕（run_pre 返回），落 JSON 产物。
+    pre_not_run: list[dict] = []
     started = time.time()
 
     print(f"=== 冒烟开始 · {cfg.get('name') or cases_doc.get('environment') or ''} "
@@ -566,7 +596,18 @@ def main() -> int:
             time.sleep(gap)
 
         for step in case.get("pre") or []:
-            run_pre(step, cfg, ctx, call, args.dry_run)
+            # 【审查修复·非静默】前置未成功必须留痕：记进本用例的结果行错误信息，
+            # 并进结构化 pre_not_run（落 JSON 产物）。此前 run_pre 对连接失败/
+            # 非 dict 响应完全静默，前置为何没跑通在报告里查无实据。
+            for rec in run_pre(step, cfg, ctx, call, args.dry_run):
+                pre_not_run.append({
+                    "序号": idx, "action": action, "名称": name,
+                    "前置action": str(step.get("action")),
+                    "原因": rec.get("reason"), "尝试次数": rec.get("attempts"),
+                    "HTTP": rec.get("http"), "响应": rec.get("resp"),
+                })
+                print(f"[{idx:>2}/{len(cases)}] ! PRE   {action}  {name}  "
+                      f"前置未成功：{rec.get('reason')}")
 
         # generate：为本用例生成一次性标识并存入上下文，供本例及后续依赖接口复用
         # （如子账号名、成员 userid）。已存在则不覆盖，保证重跑幂等。
@@ -631,7 +672,8 @@ def main() -> int:
     if not args.dry_run:
         hooks.teardown(cfg, ctx, call)
 
-    write_reports(results, cases_doc, cfg, run_id, args.out_dir, time.time() - started)
+    write_reports(results, cases_doc, cfg, run_id, args.out_dir, time.time() - started,
+                  pre_not_run=pre_not_run)
 
     if args.feedback:
         # 缺陷回流：把台账里的「缺陷」类问题提炼为模式候选（先进待评审池，不直接改正式清单）
@@ -674,7 +716,7 @@ def ui_hints(parsed):
     return "; ".join(parts)
 
 
-def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed) -> None:
+def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed, pre_not_run=None) -> None:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -787,6 +829,9 @@ def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed) -> None:
             "elapsed_sec": round(elapsed, 1),
             "summary": counts, "total": total,
             "results": results,
+            # 【审查修复·非静默】前置未成功的留痕：此前 run_pre 对连接失败/
+            # 非 dict 响应完全静默，这里会是空的，报告查不到前置为何没跑通。
+            "pre_not_run": list(pre_not_run or []),
         }, f, ensure_ascii=False, indent=2)
 
     # 4) 汇总 MD
@@ -835,11 +880,29 @@ def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed) -> None:
             lines.append(f"| {r['action']} | {r['名称']} | {r['错误信息'][:80]} |")
     else:
         lines.append("无。")
+    # 【审查修复·非静默】前置未成功清单：这些用例的「跳过」根因在前置，
+    # 不点名的话读报告的人只会看到一串没有原因解释的 N/A。
+    lines += [
+        "",
+        "## 前置未成功清单（依赖用例被跳过的根因）",
+        "",
+    ]
+    if pre_not_run:
+        lines += ["| 用例 action | 用例名称 | 前置 action | 原因 | 尝试次数 | HTTP |",
+                  "| --- | --- | --- | --- | --- | --- |"]
+        for r in pre_not_run:
+            lines.append("| %s | %s | %s | %s | %s | %s |" % (
+                r.get("action"), r.get("名称"), r.get("前置action"),
+                str(r.get("原因") or "")[:60], r.get("尝试次数"), r.get("HTTP")))
+    else:
+        lines.append("无。")
     with open(p_md, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
     print("\n=== 汇总 ===")
     print("  " + "  ".join(f"{k}={counts.get(k, 0)}" for k in ("PASS", "FAIL", "N/A", "ERROR")))
+    if pre_not_run:
+        print(f"  前置未成功 {len(pre_not_run)} 处（详见产物 pre_not_run）")
     for p in (p_res, p_iss, p_json, p_md):
         print(f"  产物: {p}")
 

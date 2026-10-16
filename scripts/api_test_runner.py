@@ -312,10 +312,16 @@ def call_meta(payload, retries=None):
     """
     code, raw, parsed = call(payload, retries=RETRY_COUNT if retries is None else retries)
     local = getattr(_HEADERS_LOCAL, "headers", None)
-    # 【审查修复】连接失败路径 call() 不 record 任何头——thread-local 里残留的
-    # 是**上一次成功请求**的头，直接返回会把旧 TraceID 安在本次失败上。
-    # 失败请求（code=-1 / 响应非 JSON）返回空头：证据列为空 = 如实，胜过错配。
-    if code == -1 or parsed is None:
+    # 【审查修复·HTTPError 有真实响应头】旧的守卫是 `code == -1 or parsed is None`
+    # 就返回空头，把两类完全不同的失败混为一谈：
+    #   ① code == -1：连接失败，压根没有响应 —— 此时 thread-local 里残留的是
+    #      **上一次成功请求**的头，返回它会把旧 TraceID 安在本次失败上，必须空；
+    #   ② parsed is None 且 code >= 400：HTTPError（如 500 的 HTML 错误页、
+    #      502 网关页）——服务端**确实回了响应头**（Request-ID / TraceID /
+    #      Content-Type 常只在这里），把它们丢掉等于丢证据：4xx/5xx 台账里
+    #      恰恰最需要这几列来定位。call() 已在 HTTPError 分支调过
+    #      _record_response_headers(e.headers)，此处照实返回。
+    if code == -1:
         return code, raw, parsed, {}
     if local is None:
         # 兜底：极端情况下（子线程未经过 _record）回落全局，避免返回 NoneType
@@ -460,9 +466,17 @@ def auto_evidence(http_code=None, headers=None):
     `_record_response_headers` 旁路采好，但两者都没接进台账——**输入全在手上，
     只是没人把它们交给 add_issue**，导出的 CSV 里这几列恒为空。
     签名按"只传拿得到的"设计：headers 省略时回退读旁路缓存。
+
+    【审查修复·W35 并发安全】回退此前直接读模块级 LAST_RESPONSE_HEADERS 全局
+    单例——并发执行时它会被别的线程的请求覆盖，台账里的 request_id/trace_id
+    会张冠李戴（本函数正是 W35 要保护的那条证据链，却仍在读全局，
+    与 call_meta 的 thread-local 口径不一致）。改为与 call_meta 同源：
+    先读本线程最近一次请求的头（_HEADERS_LOCAL），本线程没记录过才回落全局。
     """
     if headers is None:
-        headers = LAST_RESPONSE_HEADERS
+        headers = getattr(_HEADERS_LOCAL, "headers", None)
+        if headers is None:
+            headers = LAST_RESPONSE_HEADERS
     rid, tid = extract_request_ids(headers)
     return {"http_code": http_code, "request_id": rid, "trace_id": tid}
 
@@ -1119,17 +1133,55 @@ def check_pagination(list_action, base_params, page_param="page_index",
     # 边界循环只把 result 拼进字符串、从不比对返回条数 vs total。补一个显式检查：
     # 用一条不可能命中的筛选值请求——返回条数仍等于全量 total 即筛选静默失效。
     if isinstance(total, int) and total > 0 and base_items:
-        c, fr = _call(**{page_param: 1, size_param: max(10, len(base_items)),
+        # 【审查修复·判定条件】比条数必须在**同一口径**上。旧实现请求页长用基线页长
+        # （max(10, len(base_items))），却拿返回条数与**全量 total** 比：total 一旦
+        # 大于页长（total=57 / page_size=10 是最常见形态），返回条数恒等于页长，
+        # 永远 != total —— 这条检查恒不成立，漏的正是 W7 要防的那一类。
+        # 改为：请求页长取「能装下全量」，让「返回条数 == total」成为同口径比较；
+        # 服务端回显 total 字段时直接比 total（不受服务端页长上限影响，最可靠）。
+        _probe_size = min(max(int(total), 10), max_page_size)
+        c, fr = _call(**{page_param: 1, size_param: _probe_size,
                          "keyword": "__no_such_keyword_9x7y__",
                          "filter_field": "__no_such_value__"})
         fdata = (fr.get("data") or {}) if isinstance(fr, dict) else {}
-        fitems = fdata.get(list_field) or []
-        if isinstance(fitems, list) and len(fitems) == total:
+        fitems = fdata.get(list_field)
+        ftotal = fdata.get(total_field)
+        # 【审查修复·结论文案】服务端拒绝未知筛选参数（result=false / 无列表 /
+        # 响应非 dict）时，返回 0 条**不是**「筛选生效」的证据——那只是服务端
+        # 不接受这个参数名。旧实现一律写成「筛选生效或已定义」，用一个没验证过的
+        # 结论给台账盖章：真失效的接口也会被这句盖章放行。如实记不可判定。
+        if (not isinstance(fr, dict) or fr.get("result") is False
+                or (not isinstance(fitems, list) and not isinstance(ftotal, int))):
+            _why = (fr.get("errormsg") if isinstance(fr, dict) else "") or ("HTTP %s" % c)
             findings.append(
-                f"筛选失效：传入不可能命中的筛选值后仍返回全部 {total} 条（筛选参数被静默忽略）")
+                "筛选有效性不可判定：传入不可能命中的筛选值后服务端未返回列表（%s）——"
+                "既未证明筛选生效，也未证明失效，请人工确认该接口是否支持 "
+                "keyword/filter_field 筛选" % str(_why)[:80])
+        elif isinstance(ftotal, int):
+            # 最强证据：服务端自己报全量条数，与页长无关
+            if ftotal == total:
+                findings.append(
+                    "筛选失效：传入不可能命中的筛选值后 total 仍为 %d（筛选参数被静默忽略）"
+                    % ftotal)
+                bad.append(findings[-1])
+            else:
+                findings.append(
+                    "无效筛选值后 total=%d（≠全量 %d，筛选已生效）" % (ftotal, total))
+        elif _probe_size >= total and len(fitems) == total:
+            # 不回显 total 时退回条数比较：页长已能装下全量，返回条数恰等于全量
+            # 即筛选被静默忽略（不可能命中的筛选值本该返回 0 条）
+            findings.append(
+                "筛选失效：传入不可能命中的筛选值后仍返回全部 %d 条（筛选参数被静默忽略）"
+                % total)
             bad.append(findings[-1])
-        elif isinstance(fitems, list):
-            findings.append(f"无效筛选值返回 {len(fitems)} 条（≠全量 {total}，筛选生效或已定义）")
+        elif len(fitems) == 0:
+            findings.append("无效筛选值返回 0 条（筛选已生效）")
+        else:
+            # 0 < 条数 < 全量：既可能是筛选生效后仍有命中，也可能是服务端自行截断了
+            # 页长（page_size 被压到上限）——两种解释在报文上无法区分，不下结论。
+            findings.append(
+                "筛选有效性不可判定：无效筛选值返回 %d 条（既非 0 也非全量 %d，"
+                "无法区分「筛选仍生效」与「服务端截断了页长」）" % (len(fitems), total))
     if bad:
         return False, findings, "分页存在缺陷: " + "; ".join(bad)
     return True, findings, "分页边界、游标/Token 行为与末页行为已定义"
@@ -1631,14 +1683,19 @@ def _strip_control_keys(kwargs):
 
 def run(case_no, name, action, expect_success, category,
         contract=False, err_exact=None, applicability="适用", dimension="",
-        tolerate_reject=None, check=None, **kwargs):
+        tolerate_reject=None, check_mode=None, **kwargs):
     """执行单个用例，记录结果并收集问题/观察。
     err_exact: 异常用例期望命中的错误关键词列表；不命中则判 FAIL 并记问题。
     dimension: 用例所属维度编号，写入结果供覆盖率门禁统计——**不是请求参数**。
-    check: 深度校验标识（case_runner.CHECKS 注册的检查名，如 cross_list/pagination）。
-    带 check 的用例不计入 shallow_passes（其断言深度由 check 函数提供）——
+    check_mode: 深度校验标识（case_runner.CHECKS 注册的检查名，如 cross_list/pagination）。
+    带 check_mode 的用例不计入 shallow_passes（其断言深度由 check 函数提供）——
     命名参数保证它不会像普通 kwargs 一样泄漏进请求报文（【审查修复】此前
     exec_case 不传、kwargs 形态又会进 payload，两头都不对）。
+    【审查修复·参数名撞名】此前该控制参数叫 `check`：它与业务字段名 `check`
+    撞名——业务真有 check 字段时，调用方 `run(..., **{"check": 1})` 会命中
+    命名参数而非进 kwargs，直接 TypeError「got multiple values for keyword
+    argument 'check'」把整条执行链崩掉（业务字段名是不可控的，测试框架不该
+    占用它）。改名 check_mode，同步更新全部调用方（case_runner.exec_case）。
     注意方向：expect_success=True 表示"合法输入应成功"；expect_success=False 表示"用例本身
     就是在测'应被拒绝'的场景"。**绝不要把非法输入配成 expect_success=True**——
     那会把"接口没做校验"误判成"测试通过"。参数校验类用例请改用 assert_validation()。"""
@@ -1764,7 +1821,7 @@ def run(case_no, name, action, expect_success, category,
     # 【W51 反假告警】check 已升为 run() 的命名参数（exec_case 透传），深度校验
     # 用例（cross_list/pagination/count_delta/trace_id 等）不计浅用例——断言深度
     # 由 check 函数提供；命名参数形态保证不进请求报文也不进 kwargs。
-    _deep_check = bool(check)
+    _deep_check = bool(check_mode)
     if status == "PASS" and expect_success and not contract and not _deep_check:
         global shallow_passes
         shallow_passes += 1
@@ -1917,8 +1974,17 @@ def coverage_gate():
         # 计入 executed 等于让"缺配置没跑"冒充"已测过"。因此只有 add_issue 产出的
         # kind=缺陷（真缺陷，必然来自真实执行）补计维度；"未执行"字样的观察一律排除，
         # 与 _need_config 注释、case-coverage.md 口径对齐。
+        #
+        # 【审查修复】补上 kind=待确认 这一类。W1 的「无 err_exact 的拒绝不判 PASS，降级
+        # 待确认高危观察」产出的正是这种记录：用例**确实发了请求、拿到了响应**，只是
+        # 断言不明确（无法区分目标校验生效与其它拒绝原因）。此前门禁只认 kind=缺陷，
+        # 于是一个只由这类用例构成的维度会被报成覆盖率缺口（severity=高，
+        # WJX_STRICT_COVERAGE=1 时直接 exit 2）——即「W1 修好的假通过变成了假缺口」。
+        # 为什么不能把「待确认」加进 EXECUTED_STATUSES：那个 kind 同时表示「跑过但断言
+        # 不明」与「缺配置没跑」两种语义（见上），加进去会让后者冒充已测过。改在这里
+        # 用已有的「未执行」排除做精确分流，与 PRECONDITION_UNMET 的处理口径一致。
         kind = str(f.get("kind") or "").strip()
-        if kind != "缺陷":
+        if kind not in ("缺陷", "待确认"):
             continue
         if "未执行" in str(f.get("desc") or ""):
             continue

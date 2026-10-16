@@ -999,6 +999,9 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
         "read_params": rp,
         "list_action": la,
         "companion": comp,
+        # 【审查修复·pick_by_family 纯化】字段族退化的告警收集器：生成器不再直接
+        # 写 stderr，改由这里统一收集 → 落产物 gen_warnings + stderr 摘要。
+        "gen_warnings": [],
     }
     cases = []
     cases += gen_baseline(contract, base, contract.get("action"))
@@ -1057,7 +1060,7 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
     # 用例身份证：全量用例（含语义/人工）纳入编号体系后，再与契约约束对账。
     # 用派生而非逐点手改：9 个生成器、84 个 _mk 调用点，只有集中派生才不会漏。
     check_key.assign_keys(uniq)
-    ck_rec = check_key.reconcile(uniq, contract)
+    ck_rec = check_key.reconcile(uniq, contract, warnings=ctx["gen_warnings"])
 
     if not contract.get("request_fields") and not contract.get("response_fields"):
         sys.stderr.write(
@@ -1065,6 +1068,12 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
             "不代表设计覆盖。\n"
             "  请检查：① 契约格式是否为 ShowDoc Markdown / OpenAPI 3.x / Swagger 2.0；\n"
             "  ② 或改用声明式 JSON 契约显式给出 request_fields；详见 references/auto_generation.md。\n")
+
+    # 【审查修复·pick_by_family 纯化】字段族退化告警在生成层统一出声：
+    # 生成器（pattern_engine / check_key）只往 ctx["gen_warnings"] 收集，
+    # 由这里决定输出——既是它们的输出层，也让告警随产物 gen_warnings 可审计。
+    for w in ctx["gen_warnings"]:
+        sys.stderr.write("[case_generator] %s\n" % w)
 
     return {
         "action": contract.get("action"),
@@ -1092,6 +1101,8 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
         "tier_stats": tier_stats(uniq),
         "payload_skipped": payload_skipped,
         "check_key": ck_rec,
+        # 【审查修复·pick_by_family 纯化】生成期告警随产物透出（谁被字段族限额砍掉）
+        "gen_warnings": ctx["gen_warnings"],
         "llm_verify_report": contract.get("llm_verify_report"),
         "cases": uniq,
     }

@@ -115,29 +115,52 @@ NA_REASON = {
 INTL_HINTS = ["国际版", "海外", "多语言", "国际化", "i18n", "language", "locale", "currency", "timezone"]
 
 
-def _word_hit(keyword, text):
-    """英文关键词按词边界匹配，中文仍用子串（W30）。
+def _split_words(text):
+    """把标识符切成词：先按非字母数字切，再按驼峰切。
 
-    误命中实测：add→address、get→target/forget、new→renew——把「地址管理」判成
-    创建类、「获取目标」判成查询类，后续幂等/状态机用例整块错向。"""
+    【审查修复】W30 的词边界把**复合词里的操作名**也一起杀了：接口名 batchImport /
+    importData / updateTitle / removeItem 是 wjx 契约的主流命名，lower 之后
+    `import` 前面紧邻 `h`，词边界判否 → 操作类型退回「待确认」→ P03 事件推送 /
+    P08 重复数据 / S1 并发 / S3 终态这四个以 op_type 为门控的模式**整块不产**
+    （实测同一份契约：编辑问卷命中 17 条用例，改名 updateTitle 后只剩 13 条）。
+    按驼峰切词后整词比对，既保留反误命中（address 不含 add、forget 不含 get），
+    又不伤复合词。
+    """
+    words = []
+    for part in re.split(r"[^A-Za-z0-9]+", str(text or "")):
+        if not part:
+            continue
+        words.extend(w.lower() for w in
+                     (re.findall(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+", part) or [part]))
+    return [w for w in words if w]
+
+
+def _word_hit(keyword, text):
+    """英文关键词按驼峰分词做**整词**匹配，中文仍用子串（W30 + 审查修复）。
+
+    W30 原意是修子串误命中（add→address、get→target/forget、new→renew），但它用的是
+    原始子串两侧的边界判定，于是把 batchImport 这类真实操作名一并杀掉。这里改成
+    先分词再整词比对，两个目标同时满足。"""
     if not keyword or not text:
         return False
     if re.match(r"^[a-z][a-z0-9_-]*$", keyword):
-        return re.search(r"(?:^|[^a-z0-9])%s(?:[^a-z0-9]|$)" % re.escape(keyword), text) is not None
+        kw = keyword.replace("-", "").replace("_", "")
+        return any(w.replace("_", "") == kw for w in _split_words(text))
     return keyword in text
 
 
 def _detect_op_type(contract):
     """操作类型识别。
 
-    【W30】英文关键词词边界匹配；全部未命中时**不再默认「查询」**——返回 None，
+    【W30】英文关键词按词边界匹配；全部未命中时**不再默认「查询」**——返回 None，
     由调用方记「操作类型待确认」（创建/删除被误判查询会让幂等/状态机整块 N/A 漏测，
     宁可待确认不可错向）。仅当接口名含明确的列表/分页信号时才保守判查询。"""
+    # 【审查修复】传**原始大小写**：驼峰是复合词的操作信号（batchImport = batch + import），
+    # 先 lower 再匹配就再也分不出词边界了。
     name = (contract.get("name") or "") + " " + str(contract.get("action") or "")
-    low = name.lower()
     for op, keys in OP_RULES:
         for k in keys:
-            if _word_hit(k, low):
+            if _word_hit(k, name):
                 return op
     # 无命中：列表/分页强信号才判查询，否则待确认
     if _is_list_query(contract):
