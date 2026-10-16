@@ -377,7 +377,13 @@ def s2_match(c, ctx):
 
 
 def s2_gen(c, ctx):
-    """数组字段的部分成功语义。遍历所有命中字段——只取第一个会漏掉其余数组字段。"""
+    """数组字段的部分成功语义。遍历所有命中字段——只取第一个会漏掉其余数组字段。
+
+    【W33 反假 FAIL】S2 的 X01 与 dim_generators 的 X-BATCH-02 对同一 X 维断言方向
+    相反：本条注「其余项应仍生效」（暗示部分成功=对），X-BATCH-02 注「整体拒绝或明确
+    部分失败语义」（两种设计都合法）。部分成功 vs 整体回滚是业务决策，机械断言猜不
+    对方向——统一按 dim_generators 口径：不强判 success，改 check=batch_partial 深度
+    校验（由执行期按响应语义判定），同维度必有一条假 FAIL 的问题消除。"""
     hits = [f for f in (c.get("request_fields") or [])
             if (f.get("type") or "") in ("array", "list")
             or f["name"].lower().endswith(("ids", "list", "_ids"))]
@@ -386,10 +392,12 @@ def s2_gen(c, ctx):
         p = dict(ctx["base"])
         p[f["name"]] = ["valid_value", "invalid_value_@@"]
         out.append(_mk("X01" if i == 0 else "X%02d" % (i + 1),
-                       "批量：%s 含一项非法时，其余项应仍生效（部分成功语义）" % f["name"],
-                       "X", "批量操作", p, {"success": True},
+                       "批量：%s 含一项非法时的语义（部分成功或整体拒绝，响应必须说清）" % f["name"],
+                       "X", "批量操作", p, {"success": True, "tolerate_reject": ["非法", "无效", "不合法", "失败"]},
                        check="batch_partial", priority="P1", source="pattern:S2",
-                       note="补充：批量中一项有问题导致其余全改不了即缺陷(X1/Z3/U2)"))
+                       note="「部分成功」与「整体回滚」都是合法设计——与 X-BATCH-02 同口径："
+                            "响应里说清语义即可，静默丢弃非法项才是缺陷(X1/Z3/U2)；"
+                            "被整体拒绝属合法设计（tolerate_reject），不再强判方向"))
     return out
 
 

@@ -420,7 +420,12 @@ def _read_count(count_action, count_field, extra_params=None):
         return None
     data = parsed.get("data") or {}
     if isinstance(data, dict):
-        return data.get(count_field) or data.get("count") or data.get("total")
+        # 【W17】合法计数 0 是假值——`or` 链把 0 跳过去返回 None，「删除到空 /
+        # 新建前基准为 0」场景的计数交叉验证（C1）会误判「无法获取基准，归 ENV」。
+        # 改显式判 None：第一个非 None 的键即生效（0 是合法值）。
+        for k in (count_field, "count", "total"):
+            if data.get(k) is not None:
+                return data.get(k)
     return None
 
 
@@ -784,6 +789,14 @@ def _check_uniqueness(case, parsed, args):
         R.add_issue("[%s] 业务唯一性未校验：%s" % (case.get("id"), msg), params,
                     fid=case.get("id"), expected="重复值应被拒绝并回显冲突字段",
                     actual=msg, severity="高", dimension=case.get("dimension") or "AC")
+    elif ok is True and ("错误信息有问题" in msg or "未回显冲突值" in msg):
+        # 【W5 配套】唯一性生效但文案有缺陷（对象名错误/冲突值未回显/i18n 占位未渲染）
+        # ——docstring 明列的历史缺陷形态，旧调用只在 ok is False 时记台账，
+        # 这类「文案不合格」被静默丢弃。记中危 finding 留痕。
+        R.add_issue("[%s] 唯一性已生效但错误文案不合格：%s" % (case.get("id"), msg),
+                    params, fid="%s-copy" % case.get("id"),
+                    expected="拒绝文案指明冲突字段并回显冲突值",
+                    actual=msg, severity="中", dimension=case.get("dimension") or "AC")
 
 
 def _check_pagination(case, parsed, args):
@@ -807,24 +820,42 @@ def _check_pagination(case, parsed, args):
 
 
 def _check_terminal_repeat(case, parsed, args):
-    """E：终态重复操作——处于终态的资源再次执行同一操作，必须被拒绝而不是静默成功。"""
+    """E：终态重复操作——处于终态的资源再次执行同一操作，必须被拒绝而不是静默成功。
+
+    【W6 反假通过】名义是「必须被拒」，旧实现只跑幂等比对且第二次被接受只记低危
+    观察——真正的终态保护缺陷（删完再删仍 success）永远不判 FAIL。现在显式断言：
+    第二次请求 result=false 才正常；被接受（result=true）= 终态保护缺失，记高危缺陷。
+    幂等比对保留作旁证（两次都拒绝但结果漂移也值得点名）。"""
     action = case.get("action")
     params = case.get("params") or {}
     if not action:
         _need_config(case, "terminal_repeat", ["action"], "无法确定接口")
         return
+    # 第一次「终态化」由主用例完成（parsed 即其响应）；这里重复提交同参数。
+    code, raw, second = R.call(R.build_payload(action, **params), retries=R.RETRY_COUNT)
+    second_result = second.get("result") if isinstance(second, dict) else None
+    second_err = str(second.get("errormsg", "")) if isinstance(second, dict) else ""
+    dim = case.get("dimension") or "E"
+    if second_result is True:
+        R.add_issue(
+            "[%s] 终态保护缺失：资源已处于终态，重复执行同一操作仍返回成功（%s）"
+            % (case.get("id"), second_err or "无错误信息"), params, fid=case.get("id"),
+            expected="终态资源再操作应被拒绝（result=false）",
+            actual="第二次执行返回成功", severity="高", dimension=dim)
+        return
+    if second_result is None:
+        # 不具备判定前提（连接失败/响应非 JSON）：留痕不判定（与 W3 同口径）。
+        R.add_observation(
+            "[%s] 终态重复操作无法验证：第二次请求失败（code=%s）" % (case.get("id"), code),
+            params, fid=case.get("id"), severity="低", dimension=dim)
+        return
+    # 第二次被拒绝 = 终态保护生效。附一条幂等旁证比对（保留旧能力，不改变判定）。
     ok, _results, msg = R.check_idempotent(action, lambda: dict(params), times=2)
-    if ok is None:
-        # 【W3 配套】不具备比对前提（接口全失败/响应缺 result），留痕不判定。
+    if ok is False:
         R.add_observation(
-            "[%s] 终态重复操作无法验证：%s" % (case.get("id"), msg),
-            params, fid=case.get("id"), severity="低",
-            dimension=case.get("dimension") or "E")
-    elif ok is False:
-        R.add_observation(
-            "[%s] 终态重复操作未幂等：%s（需人工确认是终态保护缺失还是幂等语义不同）"
+            "[%s] 终态重复操作未幂等：%s（终态保护已生效，此条为幂等语义旁证）"
             % (case.get("id"), msg), params, fid=case.get("id"),
-            severity="低", dimension=case.get("dimension") or "E")
+            severity="低", dimension=dim)
 
 
 def _check_render_degrade(case, parsed, args):

@@ -37,9 +37,17 @@ class TestRequiredChecks(unittest.TestCase):
         self.assertEqual(keys.count("over_validation:remark"), 1, keys)
 
     def test_unknown_constraints_not_invented(self):
-        """契约只写了字段名的，不得凭空产出约束（猜出来的约束永远无法兑现）。"""
+        """契约只写了字段名的，产出可选字段的两类已实现约束（over_validation +
+        【W12 反转】null_value——旧版 null_value 是死约束类型，B-NULL 派生成它、
+        分母从不声明，「显式 null 处理」漏测永远不出声；现与生成器对齐进分母）。
+
+        仍不产出任何「契约没声明」的约束（猜出来的约束永远无法兑现）。"""
         rec = check_key.required_checks(_contract([{"name": "x"}]))
-        self.assertEqual([r["key"] for r in rec], ["over_validation:x"])
+        self.assertEqual(sorted(r["key"] for r in rec),
+                         ["null_value:x", "over_validation:x"])
+        # required 字段不声明 null_value（其 null 语义由 missing_required 覆盖）
+        rec2 = check_key.required_checks(_contract([{"name": "y", "required": True}]))
+        self.assertNotIn("null_value:y", [r["key"] for r in rec2])
 
     def test_max_len_and_enum(self):
         rec = check_key.required_checks(_contract([

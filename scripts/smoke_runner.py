@@ -696,6 +696,22 @@ def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed) -> None:
         w.writeheader()
         n = 0
         retry_n = int(cfg.get("error_retry") or 0)
+        # 【W8 反吞】N/A 判定的用例此前完全不进台账——na_keywords 子串命中就把真失败
+        # 无痕吞掉（外观完全合理）。改为每条 N/A 落一条 low 台账（可人工翻案），
+        # N/A 语义（不计缺陷、不阻塞）不变，但「被谁吞的」必须留痕。
+        for r in [x for x in results if x["判定"] == "N/A"]:
+            n += 1
+            w.writerow({
+                "编号": f"SMK-{n:03d}", "类型": "待确认", "严重程度": "低", "状态": "待确认",
+                "维度": "冒烟-环境限制（N/A 留痕）",
+                "问题描述": (f"[action {r['action']}] {r['名称']} 判 N/A（命中 na_keywords）"
+                             f"：{r['错误信息']}——若实际为业务失败请人工翻案"),
+                "请求Body": r["请求Body"], "预期结果": "接口正常返回 result=true",
+                "实际结果": f"HTTP {r['HTTP']} · {r['错误信息']}",
+                "置信度": 0.5, "HTTP状态码": r["HTTP"],
+                "请求ID": "", "TraceID": "", "证据路径": "", "归因": "N/A_KEYWORD",
+                "复测状态": "待复测",
+            })
         for r in results:
             if r["判定"] not in ("FAIL", "ERROR"):
                 continue
@@ -778,6 +794,10 @@ def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed) -> None:
         "",
         f"**通过率**（PASS / 有效样本（排除 N/A））："
         f"{pass_n}/{max(total - counts.get('N/A', 0), 1)}",
+        "",
+        # 【W8 配套】保守口径：N/A 也算未通过——na_keywords 子串命中可能吞掉真失败，
+        # 保守口径给出「含 N/A 分母」的下界，两条口径并排呈现防误读。
+        f"**保守通过率**（PASS / 全部样本（含 N/A））：{pass_n}/{max(total, 1)}",
         "",
         "## 失败与异常明细",
         "",

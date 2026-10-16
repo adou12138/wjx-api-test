@@ -33,7 +33,8 @@ import discovery_profile                            # noqa: E402
 # 这里保留常量是为了让 check_key._MAX_LEN_CAP 与之一致（单测守这条不变量）。
 BIG_CAP = discovery_profile.DEFAULTS["big_cap"]
 TYPE_BAD = {
-    "int": "abc", "integer": "abc", "number": "abc", "float": "abc", "double": "abc",
+    "int": "abc", "int32": "abc", "int64": "abc",
+    "integer": "abc", "number": "abc", "float": "abc", "double": "abc",
     "bool": "not_a_bool", "boolean": "not_a_bool",
     "string": 12345,
     "array": "not_a_list", "list": "not_a_list", "object": "not_an_object",
@@ -79,6 +80,8 @@ def _long_value(field, n):
 # 否则注入的值恰好命中某个分支被判合法 → 得到"期望拒绝却成功"的假缺陷。
 _PRIMITIVE_VALID = {
     "int": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "int32": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "int64": lambda v: isinstance(v, int) and not isinstance(v, bool),
     "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
     "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
     "float": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
@@ -261,18 +264,50 @@ def gen_field_mutations(contract, base, action):
                                assertion_mode="over_validation",
                                note="嵌套字段缺省四态需人工在结构内构造，自动变异会破坏嵌套结构"))
             else:
+                # 【W25 反系统性假 FAIL】守卫：带以下约束的可选字段，缺省形态被拒是
+                # **正确行为**，不是过度校验——
+                #   - 有 enum：空串/null 大概率不在枚举内，被枚举校验拒绝天经地义；
+                #   - min_len>=1：空串低于最小长度，被长度校验拒绝天经地义；
+                #   - forbid 非空：强格式语义字段（URL/邮箱等），空值可能被格式校验拒绝。
+                # 旧版无条件 expect success=True → 这批字段每轮刷 B-OVER 假缺陷。
+                # missing 态保留（不传字段不应被必填校验拦截——那才是过度校验本体）；
+                # null/empty_string 态改判「允许拒绝」（tolerate_reject 落到具体守卫理由）。
+                guarded = bool(f.get("enum")) or (
+                    f.get("min_len") and int(f["min_len"]) >= 1) or bool(f.get("forbid"))
+                guard_words = []
+                if f.get("enum"):
+                    guard_words.append("枚举")
+                if f.get("min_len") and int(f["min_len"]) >= 1:
+                    guard_words.append("最小长度")
+                if f.get("forbid"):
+                    guard_words.append("格式/禁用")
                 for state, value in (("missing", None), ("null", None), ("empty_string", "")):
                     p = dict(base)
                     if state == "missing":
                         p.pop(name, None)
                     else:
                         p[name] = value
-                    out.append(_mk("B-OVER-%s-%s" % (name, state), "可选字段%s态：%s（不应过度校验）" % (state, name), "B",
-                                   "参数校验-过度校验", p, {"success": True}, action=action,
-                                   priority="P1", source="generator:over_validation", assertion_mode="over_validation",
-                                   mutation_state=state,                                evidence=["contract:optional_or_nullable"],
-                                   cleanup={"required": True, "actions": ["delete_fixture"]},
-                                   note="合法可选/可空形态被拒绝时记录过度校验缺陷"))
+                    if guarded and state in ("null", "empty_string"):
+                        out.append(_mk(
+                            "B-OVER-%s-%s" % (name, state),
+                            "可选字段%s态：%s（有%s约束，允许被拒）" % (state, name, "/".join(guard_words)),
+                            "B", "参数校验-过度校验", p,
+                            {"success": True,
+                             "tolerate_reject": ["长度", "不能为空", "不能超过", "格式", "不合法",
+                                                 "枚举", "无效", "不正确", "必须", "只能", "类型"]},
+                            action=action, priority="P1", source="generator:over_validation",
+                            assertion_mode="over_validation", mutation_state=state,
+                            evidence=["contract:optional_or_nullable", "contract:guard"],
+                            cleanup={"required": True, "actions": ["delete_fixture"]},
+                            note="字段带 %s 约束——缺省形态被守卫校验拒绝属正确行为，不再判过度校验；"
+                                 "若拒绝文案与守卫无关（如内部错误）仍会进台账" % "/".join(guard_words)))
+                    else:
+                        out.append(_mk("B-OVER-%s-%s" % (name, state), "可选字段%s态：%s（不应过度校验）" % (state, name), "B",
+                                       "参数校验-过度校验", p, {"success": True}, action=action,
+                                       priority="P1", source="generator:over_validation", assertion_mode="over_validation",
+                                       mutation_state=state,                                evidence=["contract:optional_or_nullable"],
+                                       cleanup={"required": True, "actions": ["delete_fixture"]},
+                                       note="合法可选/可空形态被拒绝时记录过度校验缺陷"))
 
         # 2) 类型错误 → 应被拒绝。字符串字段轮流取不同非法形态，避免全部打同一分支
         bad = type_bad_for(f, ftype, str_seq)
@@ -348,6 +383,24 @@ def gen_field_mutations(contract, base, action):
 
         # 4) 内容类字段的安全注入用例已升级为清单驱动：见 gen_security_payload_cases()
         #    （assets/security_payloads.json，按语义标签选载荷），此处不再内联生成。
+
+        # 5) 【W24 补消费方】规则解析出的 forbid（禁用子串）此前只有 llm 路径消费
+        #    （_FACT_CONSUMERS 写明"仅 evidence 有据的禁用词"），纯规则链路解析出
+        #    禁用词后**没有任何生成器使用**——解析了也不测。这里补 G/B 维禁用词用例：
+        #    传入被禁子串应被拒绝（安全类，与清单驱动载荷同向、但来自契约白纸黑字）。
+        for bad_word in (f.get("forbid") or [])[:5]:
+            if not bad_word or _is_nested_path(name):
+                continue
+            p = dict(base)
+            p[name] = "正常前缀%s正常后缀" % bad_word
+            out.append(_mk("G-FORBID-%s-%s" % (name, bad_word[:12]),
+                           "禁用词：%s 含被禁子串「%s」（契约声明应被拒绝）" % (name, bad_word[:20]),
+                           "G", "契约-禁用词", p,
+                           {"success": False, "tolerate_reject": ["敏感", "违规", "禁止", "非法", "不允许"]},
+                           action=action, priority="P1", source="generator:contract_forbid",
+                           evidence=["contract:forbid"],
+                           note="契约明确声明禁用子串——被原样接受是校验缺失；被内容安全策略拦下"
+                                "按「符合预期」结算（与陷阱3同向）"))
     return out
 
 
@@ -480,7 +533,17 @@ def gen_security_payload_cases(contract, base, action, skipped=None):
     """
     lib = _load_security_payloads()
     if not lib:
-        return []
+        # 【W16 反静默消失】载荷库缺失/损坏时整个 G 维凭空蒸发——注释承诺
+        # 「退回人工不静默伪造」，但旧版连 TODO 占位都没有，覆盖率门禁看到的是
+        # 「G 维 0 条」。产一条 TODO-G 留痕（needs=manual），让缺口在报告点名。
+        sys.stderr.write("[case_generator] 安全载荷库缺失或损坏（%s），G 维度降级人工\n"
+                         % SECURITY_PAYLOADS_PATH)
+        return [_mk("TODO-G", "安全载荷库不可用，需人工补充安全注入用例（XSS/SQLi/路径穿越等）",
+                    "G", "安全注入", dict(base), {"success": False},
+                    action=action, priority="P0", source="generator:security:lib_missing",
+                    needs="manual",
+                    note="assets/security_payloads.json 缺失或损坏——安全维度不得静默消失，"
+                         "修复清单文件后重跑即可自动恢复")]
     cats = {c["id"]: c for c in lib.get("categories", [])}
     # 生效条数走发现档：discovery 可放宽（如 2 → 4，含"字面 + 变体绕过"两种样本）；
     # 默认档 None → 沿用清单自带 limits，与接入前一致。

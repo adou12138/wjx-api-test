@@ -29,11 +29,19 @@ import re
 REQ_HINTS = ("请求参数", "请求字段", "请求体", "输入参数")
 RESP_HINTS = ("响应参数", "响应字段", "返回参数", "输出参数", "响应体")
 
-MAX_RE = re.compile(r"(?:最长|最多|不超过|长度不能超过|长度上限|最大)\s*(\d+)")
-MIN_RE = re.compile(r"(?:最短|最少|不小于|最小)\s*(\d+)")
+MAX_RE = re.compile(r"(?:最长|最多|不超过|长度不能超过|长度上限|最大|长度限制|长度)\s*(\d+)")
+MIN_RE = re.compile(r"(?:最短|最少|不小于|最小|至少)\s*(\d+)")
 DEF_RE = re.compile(r"默认(?:值)?(?:为|是|取)?\s*[:：]?\s*([^\s；;，,。、]+)")
 FORBID_RE = re.compile(r"不能包含\s*[“\"'‘']([^”\"'’']+)[”\"'’']")
 ENUM_ITEM_RE = re.compile(r"(-?\d+)\s*([一-龥A-Za-z][一-龥A-Za-z0-9_]*)")
+# 【W27】字符串枚举形态：「值只能是 A/B/C」「取值：basic,pro」——整数枚举正则抓不到，
+# 字符串枚举此前全丢（invalid_enum 不进分母、B-ENUM 不生成）。
+STR_ENUM_RE = re.compile(
+    r"(?:只能(?:是|为)|取值(?:范围)?(?:为|是|[:：])?|可选值[:：]?)\s*[:：]?\s*"
+    r"([A-Za-z][A-Za-z0-9_]*(?:\s*[/,，、]\s*[A-Za-z][A-Za-z0-9_]*){1,})")
+# 【W27】required 真值集合扩充：√ * 必须 yes 等非常规标记此前全漏（B-MISS 不生成）。
+REQUIRED_TRUTHY = ("是", "Y", "y", "true", "True", "TRUE", "必填", "1",
+                   "√", "✓", "*", "＊", "必须", "yes", "Yes", "YES", " required", "Required")
 ACTION_RE = re.compile(r"\[\s*(\d{4,})\s*\]")
 ACTION_BODY_RE = re.compile(r"(?:动作标识|action)\s*(?:编号|ID|id)?\s*(?:为|是|=|:|：)?\s*[`'\"]?(\d{4,})", re.I)
 URL_RE = re.compile(r"https?://[^\s`\"'）)、,，]+")
@@ -116,6 +124,14 @@ def _parse_constraints(remark, desc=""):
         vals = [int(v) for v, _ in items]
         if len(set(vals)) == len(vals):
             out["enum"] = [(int(v), lab) for v, lab in items]
+    # 【W27】字符串枚举：「只能是 A/B/C」「取值：basic,pro」——整数枚举正则抓不到。
+    # 字符串值没有天然释义，释义列留空由人工确认（标「疑似枚举」语义，先入分母）。
+    if not out["enum"]:
+        m = STR_ENUM_RE.search(text)
+        if m:
+            vals = [v.strip() for v in re.split(r"[/,，、]", m.group(1)) if v.strip()]
+            if len(vals) >= 2 and len(set(vals)) == len(vals):
+                out["enum"] = [(v, "") for v in vals]
     return out
 
 
@@ -131,7 +147,11 @@ def _mk_field(cells, header):
     remark = _pick(cells, i_remark)
     desc = _pick(cells, i_desc)
     req_raw = _pick(cells, i_req)
-    required = req_raw.strip() in ("是", "Y", "y", "true", "True", "必填", "1")
+    # 【W27】required 真值集合扩充：√/*/*＊/必须/yes 等非常规标记此前全漏
+    # （B-MISS 不生成、对账分母少算）。归一后判断，strip 已在 _pick 完成。
+    required = req_raw.strip().rstrip("*＊") in tuple(
+        t.strip() for t in REQUIRED_TRUTHY) or req_raw.strip() in ("*", "＊") \
+        or req_raw.strip() in REQUIRED_TRUTHY
     cons = _parse_constraints(remark, desc)
     return {
         "name": name,

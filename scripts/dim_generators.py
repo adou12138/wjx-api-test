@@ -159,20 +159,42 @@ def gen_trace_cases(contract, base, action):
 
     只在响应/契约里能识别到追踪字段时才硬验「两次调用标识不同」；识别不到就记观察——
     没有 trace 字段是设计选择，不是缺陷，不能硬判。
+    【W15 反虚高】旧版无条件产 V01/V02（probe）→ V 永远非零产出、覆盖率恒绿，
+    实际可能什么都没验。现改为：契约可识别 trace/request-id 语义才产探针；
+    识别不到产 TODO-V 占位（needs=manual），缺口在报告点名、不再恒绿。
     """
-    out = []
-    out.append(_mk("V01", "请求追踪：调用应返回请求标识，且两次调用标识不同",
-                   "V", "请求追踪", dict(base), {"success": True},
-                   check="trace_id", check_args={"expect_distinct": True},
-                   action=action, priority="P2", source="generator:trace",
-                   note="响应含 trace/request id 时验证其存在、非空且逐次不同（用于串联日志）。"
-                        "契约未声明追踪字段时记观察，不判缺陷"))
-    out.append(_mk("V02", "请求追踪：异常响应也应携带请求标识（便于排障）",
-                   "V", "请求追踪", dict(base), {"success": True},
-                   check="trace_id", check_args={"expect_distinct": False},
-                   action=action, priority="P2", source="generator:trace",
-                   note="错误响应缺少 trace id 会让线上问题无法定位；契约未声明时记观察"))
-    return out
+    import re as _re
+    resp_fields = [str(f.get("name") or "") for f in (contract.get("response_fields") or [])]
+    req_desc = " ".join(
+        str((f.get("desc") or "") + (f.get("remark") or ""))
+        for f in (contract.get("request_fields") or []))
+    resp_desc = " ".join(
+        str((f.get("desc") or "") + (f.get("remark") or ""))
+        for f in (contract.get("response_fields") or []))
+    trace_hit = bool(_re.search(
+        r"trace[_-]?id|request[_-]?id|req[_-]?id|serial|流水|追踪|请求标识|请求id",
+        " ".join(resp_fields) + " " + resp_desc + " " + req_desc, _re.I))
+    if trace_hit:
+        return [
+            _mk("V01", "请求追踪：调用应返回请求标识，且两次调用标识不同",
+                "V", "请求追踪", dict(base), {"success": True},
+                check="trace_id", check_args={"expect_distinct": True},
+                action=action, priority="P2", source="generator:trace",
+                note="响应含 trace/request id 时验证其存在、非空且逐次不同（用于串联日志）。"
+                     "契约未声明追踪字段时记观察，不判缺陷"),
+            _mk("V02", "请求追踪：异常响应也应携带请求标识（便于排障）",
+                "V", "请求追踪", dict(base), {"success": True},
+                check="trace_id", check_args={"expect_distinct": False},
+                action=action, priority="P2", source="generator:trace",
+                note="错误响应缺少 trace id 会让线上问题无法定位；契约未声明时记观察"),
+        ]
+    return [_mk("TODO-V", "契约未声明追踪字段（trace/request id），V 维度降级人工确认"
+                        "（接口是否需要请求追踪属设计决策）",
+                "V", "请求追踪", dict(base), {"success": True},
+                action=action, priority="P2", source="generator:trace:no_semantic",
+                needs="manual",
+                note="无 trace 语义命中时不再凭空产探针（V 恒绿=假覆盖）；"
+                     "若接口实际返回追踪字段，属契约缺声明，请回填契约后重跑")]
 
 
 # ---------------------------------------------------------------- X 批量操作

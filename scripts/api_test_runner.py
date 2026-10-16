@@ -189,26 +189,39 @@ RETRY_COUNT = 2
 # 最近一次响应的响应头。用**旁路**记录而不是扩充 call() 的返回值：
 # 全仓有十余处按 `code, raw, parsed = call(...)` 解包，改返回值会成片炸掉。
 LAST_RESPONSE_HEADERS = {}
+# 【W35 并发安全】call_meta 的响应头读数走 thread-local：并发执行时各线程读到
+# 本线程最近一次请求的头，不会被别的请求覆盖（全局单例在并发下会张冠李戴）。
+_HEADERS_LOCAL = threading.local()
 
 # 本次执行**创建成功**的资源（action + id），供收尾清理/残留清单使用（flow.cleanup_step）。
 CREATED_RESOURCES = []
 
 
 def _record_response_headers(headers):
-    """把最近一次响应的头写入旁路，供传输层契约检查（check_transport_contract）读取。"""
+    """把最近一次响应的头写入旁路，供传输层契约检查（check_transport_contract）读取。
+
+    【W35】同时写全局（兼容既有直接读 LAST_RESPONSE_HEADERS 的消费方）与
+    thread-local（call_meta 并发路径从 thread-local 读，不会被别的线程覆盖）。
+    """
     global LAST_RESPONSE_HEADERS
     try:
-        LAST_RESPONSE_HEADERS = dict(headers.items()) if headers is not None else {}
+        snapshot = dict(headers.items()) if headers is not None else {}
     except Exception:
-        LAST_RESPONSE_HEADERS = {}
+        snapshot = {}
+    LAST_RESPONSE_HEADERS = snapshot
+    _HEADERS_LOCAL.headers = snapshot
 
 
-def call(payload, retries=2, extra_headers=None):
+def call(payload, retries=2, extra_headers=None, adapter=None):
     """发送请求，返回 (code, raw, parsed)。
     code=-1 表示重试后仍连接失败（归 ENV/网络，非业务缺陷）。
 
     extra_headers 用于模拟不同客户端特征（User-Agent / Accept 等）：黑盒测试拿不到
     多版本 SDK，只能靠改请求头让服务端走到不同的客户端分支。
+
+    adapter：【W36 可选注入】传入 adapters.base 的实例时，响应用
+    adapter.classify_response() 统一分类（GraphQL「200+errors 判失败」等防假通过
+    逻辑此前是死代码——执行链从不经过它）。不传时行为与接入前完全一致（增量）。
     """
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     hdrs = {"Content-Type": "application/json; charset=utf-8"}
@@ -228,6 +241,20 @@ def call(payload, retries=2, extra_headers=None):
                 parsed = json.loads(raw)
             except Exception:
                 pass
+            # 【W36】注入 adapter 时用 classify_response 统一分类：非 ok 状态把
+            # parsed 归一为 {"result": False, "errormsg": ...}，让下游断言链路
+            # （run/assert_validation 按 result 分支）在 GraphQL/gRPC 语义下同样成立。
+            if adapter is not None:
+                try:
+                    _cls = adapter.classify_response(
+                        type("_Resp", (), {"status_code": code, "body": raw})())
+                    _st = str((_cls or {}).get("status", ""))
+                    if _st != "ok" and isinstance(parsed, dict) and parsed.get("result") is not False:
+                        _err = _cls.get("errors") or _cls.get("message") or _st
+                        parsed = {"result": False,
+                                  "errormsg": "adapter[%s]: %s" % (_st, _err)}
+                except Exception:
+                    pass  # 分类器故障不改变原判（响应按原样交给下游）
             return (code, raw, parsed)
         except urllib.error.HTTPError as e:
             raw = e.read().decode("utf-8", errors="replace")
@@ -277,9 +304,18 @@ def call_meta(payload, retries=None):
 
     给需要看传输层的检查用（Content-Type / charset / Content-Encoding / trace-id 等）。
     响应头由 call() 旁路记录，本函数只负责读取——call() 的返回值契约保持不变。
+
+    【W35 并发安全】LAST_RESPONSE_HEADERS 是全局单例，并发执行时可能被别的请求覆盖
+    ——并发用例的请求ID/TraceID 证据会张冠李戴。改为 thread-local 读数：每个线程
+    读到的是**本线程最近一次**请求的头；LAST_RESPONSE_HEADERS 保留（全仓十余处直接
+    读它的消费方不受影响），语义变为"最后一次"，并发路径不再依赖它。
     """
     code, raw, parsed = call(payload, retries=RETRY_COUNT if retries is None else retries)
-    return code, raw, parsed, dict(LAST_RESPONSE_HEADERS)
+    local = getattr(_HEADERS_LOCAL, "headers", None)
+    if local is None:
+        # 兜底：极端情况下（子线程未经过 _record）回落全局，避免返回 NoneType
+        local = LAST_RESPONSE_HEADERS
+    return code, raw, parsed, dict(local)
 
 
 def add_finding(fid, kind, desc, payload, expected="", actual="", severity="", status="待确认",
@@ -1074,6 +1110,21 @@ def check_pagination(list_action, base_params, page_param="page_index",
             findings.append(f"超范围页码 page={far} → 仍返回 {len(items)} 条（疑似静默回退到首页）")
 
     bad = [f for f in findings if ("HTTP 5" in f) or ("疑似静默回退" in f) or ("服务端异常" in f) or ("游标" in f and "为空" in f)]
+    # 【W7 兑现 docstring 承诺】「筛选失效严禁静默返全量」此前只在文案里：
+    # 边界循环只把 result 拼进字符串、从不比对返回条数 vs total。补一个显式检查：
+    # 用一条不可能命中的筛选值请求——返回条数仍等于全量 total 即筛选静默失效。
+    if isinstance(total, int) and total > 0 and base_items:
+        c, fr = _call(**{page_param: 1, size_param: max(10, len(base_items)),
+                         "keyword": "__no_such_keyword_9x7y__",
+                         "filter_field": "__no_such_value__"})
+        fdata = (fr.get("data") or {}) if isinstance(fr, dict) else {}
+        fitems = fdata.get(list_field) or []
+        if isinstance(fitems, list) and len(fitems) == total:
+            findings.append(
+                f"筛选失效：传入不可能命中的筛选值后仍返回全部 {total} 条（筛选参数被静默忽略）")
+            bad.append(findings[-1])
+        elif isinstance(fitems, list):
+            findings.append(f"无效筛选值返回 {len(fitems)} 条（≠全量 {total}，筛选生效或已定义）")
     if bad:
         return False, findings, "分页存在缺陷: " + "; ".join(bad)
     return True, findings, "分页边界、游标/Token 行为与末页行为已定义"
@@ -1432,7 +1483,12 @@ def verify_count_delta(count_action, expected_delta, count_field="total",
         if code == -1 or not isinstance(parsed, dict) or parsed.get("result") is not True:
             return None
         data = parsed.get("data") or {}
-        return data.get(count_field) or data.get("count") or data.get("total")
+        # 【W17】合法计数 0 是假值，`or` 链会把 0 跳成 None → 「删除到空」场景
+        # 的计数交叉验证被判「无法获取基准，归 ENV」。显式判 None，0 是合法计数。
+        for k in (count_field, "count", "total"):
+            if isinstance(data, dict) and data.get(k) is not None:
+                return data.get(k)
+        return None
     if baseline is None:
         baseline = get_count()
     if baseline is None:
@@ -1683,8 +1739,15 @@ def run(case_no, name, action, expect_success, category,
             if att.get("category") == _ATTR.PRECONDITION_UNMET:
                 status = _ATTR.PRECONDITION_UNMET
                 reason = att.get("reason") or "前置条件未满足"
+                # 【W39b】命中判据点名（命中的依赖与子串），让「这条失败为何没进台账」可翻案。
+                _m = att.get("matched") if isinstance(att.get("matched"), dict) else {}
+                _mtag = ""
+                if _m:
+                    _mtag = "［命中依赖 target=%s，判据 %s］" % (
+                        _m.get("target_action", ""), _m.get("match_reason", ""))
                 add_observation(
-                    f"[{case_no}]{name} 前置条件未满足（不计缺陷）：{reason}",
+                    "[{}]{} 前置条件未满足（不计缺陷）：{}{}".format(
+                        case_no, name, reason, _mtag),
                     payload, fid=case_no, expected="先满足前置条件再重跑该用例",
                     actual=f"被拒绝：{errmsg}", dimension=dimension)
             else:

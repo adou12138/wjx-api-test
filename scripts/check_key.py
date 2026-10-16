@@ -68,7 +68,7 @@ _OVER_STATES = ("empty_string", "missing", "null")
 # 这里重复定义一份而非 import，是因为 case_generator 已 import 本模块（反向导入
 # 会成环）；一致性由单测 test_check_key.py 守住，漂移即测试失败。
 _BAD_TYPE_TOKENS = frozenset((
-    "int", "integer", "number", "float", "double",
+    "int", "int32", "int64", "integer", "number", "float", "double",
     "bool", "boolean", "string", "array", "list", "object",
 ))
 
@@ -96,8 +96,13 @@ def _declares_typed(ftype):
     中文/URL 之类的值（``问卷id``、``www.wjx.cn``、``showdoc 导出``）不含任何类型
     token——那是解析器列错位把说明当成了类型，并非契约声明的类型。把它们算进分母
     会让门禁被解析噪音淹没（实测 25 篇契约里约 11 条属此类），故不计入。
+
+    【W26 口径统一】token 切分必须与 case_generator.type_tokens 一致（[^a-z0-9]+，
+    保留数字）——旧版这里用 [^a-z]+ 会把 "int32" 切成 "int"+"32"，把数字段丢给
+    生成器侧看不到的判定，两侧对同一类型串得出不同结论。分母虚增/假缺陷由此而来。
+    （本模块刻意不 import case_generator（反向导入成环），一致性由单测锁定。）
     """
-    toks = re.split(r"[^a-z]+", str(ftype or "").lower())
+    toks = re.split(r"[^a-z0-9]+", str(ftype or "").lower())
     return any(t in _BAD_TYPE_TOKENS for t in toks if t)
 
 
@@ -164,6 +169,13 @@ def required_checks(contract):
             out.append(_chk("invalid_enum", name,
                             "枚举越界值应被拒绝（契约声明 %d 个取值）"
                             % len(f["enum"])))
+        # 【W12 激活 null_value】旧版 B-NULL 派生成 null_value key、required_checks
+        # 却从不产出需求项——「显式 null 处理」漏测永远不出声。生成器对**可选**字段
+        # 产 B-NULL-*（空值四态），这里对同一集合声明分母（required 字段的 null 语义
+        # 由 missing_required 覆盖，不重复声明，避免虚增一倍缺口）。
+        if not f.get("required"):
+            out.append(_chk("null_value", name,
+                            "可选字段显式传 null 不应被过度拒绝也不应破坏处理"))
     return out
 
 

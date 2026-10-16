@@ -38,6 +38,12 @@ def match_precondition(response, confirmed_deps, action=None):
 
     为什么必须挂"已确认"这道闸：这个判定会让一条失败**从缺陷台账里消失**。
     判错的代价是一个真缺陷被静默吞掉，且外观上完全合理。所以候选依赖不参与判定。
+
+    【W39 防吞】两条加固：
+      a) evidence 太短（<6 字符）不作为子串判据——「请重试」这类通用短文案会被
+         任何失败响应包含，等于无条件吞掉全部失败；
+      b) 匹配结果带 `match_reason`，调用方（api_test_runner 的 PRECONDITION 分支）
+         据此在 observation 里点名命中的依赖与判据，翻案时有迹可循。
     """
     if not response or not confirmed_deps:
         return None
@@ -53,11 +59,16 @@ def match_precondition(response, confirmed_deps, action=None):
         if dep_subject and subject and dep_subject != subject:
             continue
         ev = str(dep.get("evidence") or "").strip()
-        if ev and ev in text:
-            return dep
+        # 【W39a】短 evidence 不做子串判定（通用短文案命中一切失败=吞掉一切）
+        if ev and len(ev) >= 6 and ev in text:
+            out = dict(dep)
+            out["match_reason"] = "evidence-substring:%s" % ev[:40]
+            return out
         target = str(dep.get("target_action") or "").strip()
         if target and target in text:
-            return dep
+            out = dict(dep)
+            out["match_reason"] = "target-action-in-response:%s" % target
+            return out
     return None
 
 
@@ -85,6 +96,9 @@ def attribute(error=None, response=None, assertion_ok=True, contract_confidence=
                       % (target, ("，参数 " + ptxt) if ptxt else "", cond),
             "next_action": "先满足前置条件再重跑；该失败不计为缺陷",
             "evidence_action": target,
+            # 【W39b】命中判据随归因结果透出，调用方在 observation 里点名（可翻案）
+            "matched": {"target_action": dep.get("target_action", ""),
+                        "match_reason": dep.get("match_reason", "")},
         }
 
     if error and retries:
