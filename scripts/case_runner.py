@@ -831,6 +831,14 @@ def _check_terminal_repeat(case, parsed, args):
     if not action:
         _need_config(case, "terminal_repeat", ["action"], "无法确定接口")
         return
+    # 【审查修复】主请求在 exec_case 里已做占位符解析（_sanitize_params →
+    # resolve_placeholders），这里拿原始 params 重发会把 <主账号> 之类的占位符
+    # 原样发出去——第二次请求与第一次不等价，拒绝原因变成占位符校验而非终态保护，
+    # W6 的「被接受=终态保护缺失」判定随之失真。与主请求同源解析。
+    try:
+        params = _sanitize_params(case) or params
+    except Exception:
+        pass  # 解析失败时按原始 params 继续（与旧行为一致，失败会在结果里显形）
     # 第一次「终态化」由主用例完成（parsed 即其响应）；这里重复提交同参数。
     code, raw, second = R.call(R.build_payload(action, **params), retries=R.RETRY_COUNT)
     second_result = second.get("result") if isinstance(second, dict) else None

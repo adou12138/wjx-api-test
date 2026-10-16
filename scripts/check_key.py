@@ -63,6 +63,8 @@ _MECH_PREFIXES = (
 
 # B-OVER-{field}-{state} 的状态后缀，解析字段名时要剥掉
 _OVER_STATES = ("empty_string", "missing", "null")
+# B-NULL-{field}-{label} 的四态标签后缀，同上剥掉（与 pattern_engine.p07_gen 对齐）
+_NULL_STATES = ("缺失", "null", "空串", "空数组")
 
 # 生成器能构造非法值的类型 token，与 case_generator.TYPE_BAD 的键对齐。
 # 这里重复定义一份而非 import，是因为 case_generator 已 import 本模块（反向导入
@@ -206,6 +208,15 @@ def derive_key(case):
             field = cid[len(prefix):]
             if ctype == "over_validation":
                 for st in _OVER_STATES:
+                    if field.endswith("-" + st):
+                        field = field[:-(len(st) + 1)]
+                        break
+            if ctype == "null_value":
+                # 【审查修复】B-NULL-{field}-{label}（label ∈ 缺失/null/空串/空数组，
+                # pattern_engine.p07_gen 四态）——与 B-OVER 同源的状态后缀必须剥掉，
+                # 否则交付键 null_value:f-null 永远匹配不上分母键 null_value:f，
+                # reconcile 每份 null_value 都假报缺口（本批审查发现）。
+                for st in _NULL_STATES:
                     if field.endswith("-" + st):
                         field = field[:-(len(st) + 1)]
                         break

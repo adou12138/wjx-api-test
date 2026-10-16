@@ -312,6 +312,11 @@ def call_meta(payload, retries=None):
     """
     code, raw, parsed = call(payload, retries=RETRY_COUNT if retries is None else retries)
     local = getattr(_HEADERS_LOCAL, "headers", None)
+    # 【审查修复】连接失败路径 call() 不 record 任何头——thread-local 里残留的
+    # 是**上一次成功请求**的头，直接返回会把旧 TraceID 安在本次失败上。
+    # 失败请求（code=-1 / 响应非 JSON）返回空头：证据列为空 = 如实，胜过错配。
+    if code == -1 or parsed is None:
+        return code, raw, parsed, {}
     if local is None:
         # 兜底：极端情况下（子线程未经过 _record）回落全局，避免返回 NoneType
         local = LAST_RESPONSE_HEADERS
