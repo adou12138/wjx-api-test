@@ -220,6 +220,13 @@ def derive_key(case):
     只提供可追溯性，不进对账分母。
     """
     cid = _strip_dup_suffix(str(case.get("id") or ""))
+    # 【审查修复】TODO-<MECH>-<field>：生成器对嵌套点路径等无法在顶层安全变异的
+    # 字段降级的人工占位（case_generator W22 / pattern_engine W45）。语义是
+    # 「该约束已生成、转人工构造」，不是「漏产」——不认它则每个嵌套字段每轮刷
+    # 3 条永久假缺口（missing_required/over_validation/null_value，实测复现）。
+    # 剥掉 TODO- 前缀后走同一套前缀解析，占位即视为该约束已交付。
+    if cid.startswith("TODO-"):
+        cid = cid[len("TODO-"):]
     for prefix, ctype in _MECH_PREFIXES:
         if cid.startswith(prefix):
             field = cid[len(prefix):]

@@ -828,6 +828,9 @@ def _check_terminal_repeat(case, parsed, args):
     幂等比对保留作旁证（两次都拒绝但结果漂移也值得点名）。"""
     action = case.get("action")
     params = case.get("params") or {}
+    # 【审查修复】dim 提到函数开头：下方「主请求未成功」守卫分支也在用 dimension=dim，
+    # 原先定义在其后 → 该分支必 NameError（正是它要保护的路径）。
+    dim = case.get("dimension") or "E"
     if not action:
         _need_config(case, "terminal_repeat", ["action"], "无法确定接口")
         return
@@ -852,7 +855,6 @@ def _check_terminal_repeat(case, parsed, args):
     code, raw, second = R.call(R.build_payload(action, **params), retries=R.RETRY_COUNT)
     second_result = second.get("result") if isinstance(second, dict) else None
     second_err = str(second.get("errormsg", "")) if isinstance(second, dict) else ""
-    dim = case.get("dimension") or "E"
     if second_result is True:
         R.add_issue(
             "[%s] 终态保护缺失：资源已处于终态，重复执行同一操作仍返回成功（%s）"

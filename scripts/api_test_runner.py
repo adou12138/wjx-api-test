@@ -1790,8 +1790,8 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
     """【参数校验专用】断言"非法/缺失/类型错误/枚举越界 输入 → 应被【拒绝】"。
 
     B 维度（参数校验）的标准用法，专为避免"把非法输入断言成应当成功"的盲区而封装：
-      - 接口【拒绝】(result=false)  → 未断言错误文案时不能直接展放
-            · 给了 err_exact 且命中  → PASS，且错误语乙具体（最佳）
+      - 接口【拒绝】(result=false)  → 未断言错误文案时不能直接放行
+            · 给了 err_exact 且命中  → PASS，且错误语义具体（最佳）
             · 给了 err_exact 未命中  → FAIL 且记【缺陷】：错误语义与测试意图不符（与 run() 同口径）
             · 未给 err_exact         → 待确认（高危）：无法区分目标校验生效与其它拒绝原因
       - 接口【接受】(result=true)   → FAIL 且记【缺陷(参数校验缺失)】：非法/缺失输入不应被接受
