@@ -372,7 +372,13 @@ def p12_gen(c, ctx):
     note = ("Top12：历史最高发——读回写触发『XX field is required』。")
     if ra:
         rp = ctx.get("read_params") or {}
-        check_args = {"read_action": ra, "read_params": rp}
+        # writable_fields：读接口返回体含只读字段（create_time/id/状态派生列…），
+        # 原样整包回写必然被写接口拒绝——那是**契约正确**而非缺陷，却会被判成
+        # severity=高 的「过度校验」假缺陷。只回写本接口请求体声明的可写字段。
+        # case_runner._check_roundtrip 读的正是这个名字（此前从不写入 ⇒ allowed=None
+        # 恒全量回写，该过滤在真实链路上从未生效）。
+        check_args = {"read_action": ra, "read_params": rp,
+                      "writable_fields": [f["name"] for f in (c.get("request_fields") or [])]}
         if rp:
             note += "本次做真往返：读接口 %s（带参数 %s）→ 原样回写本接口。" % (ra, sorted(rp))
         else:
@@ -461,7 +467,10 @@ def s3_gen(c, ctx):
     for idx, sf in enumerate(req_status):
         name = sf["name"]
         ra = ctx.get("read_action")
-        cargs = {"read_action": ra, "read_params": ctx.get("read_params") or {}} if ra else {"fields": [name]}
+        cargs = ({"read_action": ra, "read_params": ctx.get("read_params") or {},
+                  # 同 p12_gen：真往返只回写可写字段，避免只读字段回写被拒 → 假缺陷
+                  "writable_fields": [f["name"] for f in (c.get("request_fields") or [])]}
+                 if ra else {"fields": [name]})
         out.append(_mk("E02" if idx == 0 else "E02-%s" % name,
                        "状态字段往返一致性：%s 写入值应原样回读" % name, "E", "状态机",
                        dict(ctx["base"]), {"success": True},
@@ -602,7 +611,7 @@ def s6_gen(c, ctx):
     p["__invalid_param__"] = 1
     return [_mk("H02", "HTTP 状态码语义：参数错误不应返回 200", "H", "错误处理-状态语义",
                 p, {"success": False},
-                check="http_semantics", check_args={"expected_http": 400},
+                check="http_semantics", check_args={"expected_http": 400, "semantic": "validation"},
                 priority="P1", source="pattern:S6",
                 note="补充：参数错误返回 200、401 与 403 混用即缺陷(§9.7)")]
 

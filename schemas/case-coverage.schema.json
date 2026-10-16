@@ -1,5 +1,5 @@
 {
-  "$comment": "用例执行率对账产物的形状定义。执行率由 scripts/case_coverage.py 产出；状态词表与 case_runner 写入 results 的字面量一致（PASS/FAIL/SKIPPED/N-A）。",
+  "$comment": "用例执行率对账产物的形状定义。执行率由 scripts/case_coverage.py 产出；状态词表与 case_runner 写入 results 的字面量一致（PASS/FAIL/SKIPPED/N/A）。",
   "version": "1.0",
   "coverage": {
     "description": "--out 产出的对账结果；可直接放进 report_full.json 的 coverage 段",
@@ -21,7 +21,7 @@
         "properties": {
           "total": {"type": "integer"},
           "rate": {"type": "number", "description": "严格执行的用例数 / 计划总数，0–1"},
-          "looseTotal": {"type": "integer", "description": "宽松口径：计划内有任何 result 的用例数（含 SKIPPED/N-A），与既有 coverage_gate 口径一致"},
+          "looseTotal": {"type": "integer", "description": "宽松口径：计划内有任何 result 的用例数（含 SKIPPED/N/A）。与 coverage_gate 的严格口径**不同**——后者只认 PASS/FAIL/PRECONDITION_UNMET，既不含 SKIPPED/N/A，也把 PRECONDITION_UNMET 计入已执行。"},
           "byDimension": {"type": "object"}
         }
       },
