@@ -241,8 +241,15 @@ def gen_field_mutations(contract, base, action):
                                {"success": False, "err_keywords": [name]},
                                action=action, priority="P0", source="generator:required_missing:nested",
                                evidence=["contract:required"],
+                               # 【审查修复】占位必须**同时**关掉可执行性。只改 id 前缀是不够的：
+                               # case_runner 只按 needs=="manual"/enabled=False 跳过，此条原先两者皆空
+                               # → 带着完整合法的 base 去断言「应被拒绝」→ 必然成功 → 每轮一条假 FAIL。
+                               # 缺口被 derive_key 剥 TODO- 掩盖后，假缺陷就成了唯一的残留信号，
+                               # 比修复前更难排查。与 pattern_engine.p07_gen 的 TODO-B-NULL 同口径。
+                               enabled=False, needs="manual",
                                note="嵌套点路径字段无法在顶层参数上安全变异（自动删除会破坏结构），"
-                                    "降级人工构造；直接删顶层同名键不等价——那测的是另一个字段"))
+                                    "降级人工构造；直接删顶层同名键不等价——那测的是另一个字段。"
+                                    "本条不参与执行（enabled=False/needs=manual），expect 仅供人工构造时参考"))
             else:
                 p = dict(base)
                 p.pop(name, None)
@@ -262,7 +269,11 @@ def gen_field_mutations(contract, base, action):
                                {"success": True}, action=action, priority="P1",
                                source="generator:over_validation:nested",
                                assertion_mode="over_validation",
-                               note="嵌套字段缺省四态需人工在结构内构造，自动变异会破坏嵌套结构"))
+                               # 【审查修复】同 TODO-B-MISS：占位不参与执行，否则四态断言
+                               # 拿完整 base 跑，等于把「原样发一次」当成四态之一。
+                               enabled=False, needs="manual",
+                               note="嵌套字段缺省四态需人工在结构内构造，自动变异会破坏嵌套结构；"
+                                    "本条不参与执行（enabled=False/needs=manual）"))
             else:
                 # 【W25 反系统性假 FAIL】守卫：带以下约束的可选字段，缺省形态被拒是
                 # **正确行为**，不是过度校验——
@@ -373,6 +384,8 @@ def gen_field_mutations(contract, base, action):
                                {"success": False, "err_keywords": [name]},
                                action=action, priority="P0", source="generator:length_under",
                                note="低于声明的最小长度应被拒绝；ASCII 业务形态填充，避免字符/字节口径差异"))
+            # min_len=1 时「恰好下限」= 1 个字符，是有效的正长度边界，仍需构造；
+            # 真正需要跳过的是「低于下限」（ml-1=0 即空串，与空值/缺失语义重叠，见上方 ml>=2 守卫）。
             if not f.get("enum"):
                 p2 = dict(base)
                 p2[name] = _long_value(f, ml)

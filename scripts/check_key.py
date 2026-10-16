@@ -177,11 +177,15 @@ def required_checks(contract):
         if f.get("min_len") and int(f["min_len"]) >= 2:
             out.append(_chk("below_minimum", name,
                             "低于长度下限 %s 应被拒绝" % f["min_len"]))
-            # 【W11 补分母】B-LEN-MIN（恰好下限应成功）仅对无枚举字段生成（有枚举时
-            # 业务形态字符串会被枚举校验拒绝，构造即假缺陷）——分母与该承诺严格对齐。
-            if not f.get("enum"):
-                out.append(_chk("at_minimum", name,
-                                "恰好等于长度下限 %s 应成功（边界 off-by-one）" % f["min_len"]))
+        # 【审查修复】at_minimum 的门槛是 min_len>=1，不是 >=2——只有「低于下限」在 ml==1 时
+        # 才退化成空串而与空值/缺失语义重叠（仍归 >=2 守卫）；「恰好下限」在 ml==1 时是 1 个字符，
+        # 是有效的正长度边界，生成器照常产 B-LEN-MIN（tests/test_length_bounds.py
+        # test_min_len_eq1_no_under 明确锁定该行为）。此前分母用 >=2 而生成器只看 enum，
+        # 于是 min_len==1 且无枚举时「生成器产了、分母不认」= 交付蒸发。
+        # 分母必须与生成器承诺严格对齐，且以**有测试锁定的生成器行为**为准。
+        if f.get("min_len") and int(f["min_len"]) >= 1 and not f.get("enum"):
+            out.append(_chk("at_minimum", name,
+                            "恰好等于长度下限 %s 应成功（边界 off-by-one）" % f["min_len"]))
         if f.get("enum"):
             out.append(_chk("invalid_enum", name,
                             "枚举越界值应被拒绝（契约声明 %d 个取值）"
