@@ -66,17 +66,16 @@ except Exception:  # 独立运行兜底：无个人配置时保留冒烟配置�
 import attribution_engine as _attr
 import evidence_bundle as _evid
 
-# 台账列口径与深度流程共用同一来源（api_test_runner），避免"同一份台账两套表头"。
-# 该模块导入会连带加载个人配置，故放在 try 内；失败则回退本地列定义并出声——
-# 静默用一套不同的列，正是本模块要避免的错位。
-try:
-    import api_test_runner as _R
-    SMOKE_FINDING_COLS = list(_R.FINDING_CSV_COLS)
-except Exception as _e:  # noqa: BLE001
-    SMOKE_FINDING_COLS = ["编号", "类型", "严重程度", "状态", "维度", "问题描述", "请求Body",
-                          "预期结果", "实际结果", "置信度", "HTTP状态码", "请求ID", "TraceID",
-                          "证据路径", "归因", "复测状态"]
-    print("⚠️ 台账列口径读取失败（%s: %s），已回退内置默认列" % (type(_e).__name__, _e))
+# 台账列口径的单一来源在 finding_columns.py（api_test_runner 也从它取同一份），
+# 避免"同一份台账两套表头"。该模块是纯标准库、不加载个人配置，
+# 故即便 api_test_runner 不可用也能取到同一列口径，不再另抄一份本地字面量。
+from finding_columns import load_finding_cols as _load_finding_cols
+SMOKE_FINDING_COLS, _cols_warn = _load_finding_cols()
+if _cols_warn:
+    print("⚠️ 台账列口径：%s" % _cols_warn)
+
+# 公共参数拼装规则的单一出处（与深度流程 api_test_runner 共用同一份）。
+import common_params
 
 # 产物脱敏开关：默认开启。结果 CSV / 问题台账 / report JSON 都要外发给开发，
 # 明文 sign / token / cookie / password 等于直接泄露凭据，故默认打码
@@ -553,15 +552,27 @@ def main() -> int:
     def build_payload(action: str, extra: dict | None = None) -> dict:
         """按统一规则构造**完整**请求报文：公共参数 + 动态生成参数 + action + 业务参数。
 
+        规则本体在 common_params.build_request_payload（与深度流程同源）。
         抽成独立函数是为了让 dry-run 与真实调用共用同一条构造路径——
         dry-run 曾绕过 call()，导致「请求Body」列空、而「响应Body」列填的却是请求参数。"""
-        payload = dict(common)
+        generated = {}
         for k, v in (common_gen or {}).items():
             if v == "unix_ts":
-                payload[k] = str(int(time.time()))
-        payload[cfg.get("action_param") or "action"] = action
-        payload.update(render(extra or {}, ctx, cfg))
-        return payload
+                generated[k] = common_params.generate_ts()
+        # 公共参数之外的其它透传键（含动态生成键）与业务参数合并后交给统一构造器
+        passthrough = {k: v for k, v in common.items()
+                       if k not in ("encode", "appid", "sign", "ts")}
+        passthrough.update(generated)
+        passthrough.update(render(extra or {}, ctx, cfg))
+        return common_params.build_request_payload(
+            action,
+            encode=common.get("encode"),
+            appid=common.get("appid"),
+            sign=common.get("sign"),
+            ts_value=generated.get("ts", common.get("ts")),
+            action_param=cfg.get("action_param") or "action",
+            extra=passthrough,
+        )
 
     def call(action: str, extra: dict | None = None, endpoint: str | None = None):
         """统一调用入口，同时供 hooks 复用（前置调用、清理调用）。

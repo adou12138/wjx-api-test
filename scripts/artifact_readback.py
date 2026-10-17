@@ -345,7 +345,11 @@ def _print_report(issues):
     print("\n回读结果: error=%d warning=%d info=%d" % (n_err, n_warn, len(issues) - n_err - n_warn))
     if n_err:
         print("→ 有error 级问题，产物不可直接交付（脚本退出≠产物可交付）。")
-    return 1
+    # 只有 error 才判失败；warning 是否升级由调用方的严格度（--strict / WJX_STRICT_READBACK）决定，
+    # 否则默认温和的约定会被这里无条件 return 1 架空（warning 也被当失败）。
+    return 1 if n_err else 0
+
+
 def _main():
     ap = argparse.ArgumentParser(description="产物回读校验（交付前自检）")
     ap.add_argument("--dir", default=".", help="产物所在目录（自动识别台账与报告）")

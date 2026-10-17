@@ -378,5 +378,29 @@ class TestColumnExternalization(unittest.TestCase):
         self.assertEqual(list(S.SMOKE_FINDING_COLS), list(R.FINDING_CSV_COLS))
 
 
+class TestReadbackExitContract(unittest.TestCase):
+    """_print_report 的返回契约：只有 error 才判失败。
+
+    warning 是否升级由调用方严格度（--strict / WJX_STRICT_READBACK）决定。
+    这里锁死"warning-only 不返回失败"，否则默认温和的约定会被架空——
+    CLI 曾在 warning-only 时也无条件 return 1，使 strict 开关形同虚设。
+    """
+
+    def _print(self, issues):
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            return AR._print_report(issues)
+
+    def test_warning_only_is_not_failure(self):
+        self.assertEqual(self._print([{"severity": AR.WARNING, "code": "X", "message": "m"}]), 0)
+
+    def test_error_is_failure(self):
+        self.assertEqual(self._print([{"severity": AR.ERROR, "code": "X", "message": "m"}]), 1)
+
+    def test_clean_passes(self):
+        self.assertEqual(self._print([]), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

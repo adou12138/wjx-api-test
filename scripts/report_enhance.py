@@ -44,6 +44,22 @@ FIX_SUGGEST = {
 
 SEVERITY_ORDER = {"高": 0, "中": 1, "低": 2, "信息": 3, "": 4}
 
+# 维度列实际取值是「字母前缀 + 子号」（如 B8 / AA3 / H9），而 FIX_SUGGEST 的主键是
+# 维度前缀（B / AA / H）。精确匹配失败时按前缀回退，否则"挂维度号给排查方向"
+# 会对绝大多数真实 finding 静默退化成兜底文案。
+_LEAD_ALPHA_RE = re.compile(r"^([A-Za-z]+)")
+
+
+def _fix_for(dim):
+    """维度编号 -> 修复建议：先精确匹配，再按字母前缀匹配，最后兜底。"""
+    d = (dim or "").strip()
+    if d in FIX_SUGGEST:
+        return FIX_SUGGEST[d]
+    m = _LEAD_ALPHA_RE.match(d)
+    if m and m.group(1).upper() in FIX_SUGGEST:
+        return FIX_SUGGEST[m.group(1).upper()]
+    return "对照 framework.md 该维度逐项核对"
+
 
 def _norm(desc):
     """归一化描述用于聚类：去掉编号、具体值与标点差异。"""
@@ -97,7 +113,7 @@ def enhance(csv_path, out_prefix):
         for i, c in enumerate(ordered, 1):
             w.writerow(["CL-%02d" % i, c["dim"], c["severity"], c["count"],
                         ",".join(x for x in c["ids"] if x), c["desc"], c["expected"],
-                        c["actual"], FIX_SUGGEST.get(c["dim"], "对照 framework.md 该维度逐项核对"),
+                        c["actual"], _fix_for(c["dim"]),
                         _curl(c["body"])])
 
     # 人类可读 MD
@@ -107,7 +123,7 @@ def enhance(csv_path, out_prefix):
     for i, c in enumerate(ordered, 1):
         lines.append("| CL-%02d | %s | %s | %d | %s | %s |" % (
             i, c["dim"], c["severity"], c["count"], c["desc"].replace("|", "/")[:60],
-            FIX_SUGGEST.get(c["dim"], "对照 framework.md 该维度核对").replace("|", "/")[:40]))
+            _fix_for(c["dim"]).replace("|", "/")[:40]))
     lines += ["", "## 复现命令", ""]
     for i, c in enumerate(ordered, 1):
         lines.append("**CL-%02d**（%s）" % (i, c["dim"]))
