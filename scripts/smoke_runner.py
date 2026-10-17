@@ -254,7 +254,15 @@ def apply_extracts(extracts: dict | None, ctx: Ctx, parsed) -> None:
         val = get_path(parsed, path)
         if val is not None:
             prev = ctx.get(out_key)
-            ctx.set(out_key, val if not isinstance(prev, int) or not isinstance(val, str) else type(prev)(val))
+            # 【审查修复·P2】prev 是数值、val 是字符串时做类型对齐转换（如分页 total
+            # "123"→123），但 "N/A"/"" 这类不可转字符串会抛 ValueError——旧版未捕获，
+            # 一条提取失败直接炸掉整轮冒烟。转换失败保留原值留痕，不中断。
+            if isinstance(prev, int) and not isinstance(prev, bool) and isinstance(val, str):
+                try:
+                    val = type(prev)(val)
+                except (TypeError, ValueError):
+                    pass
+            ctx.set(out_key, val)
 
 
 def run_pre(step: dict, cfg: dict, ctx: Ctx, call, dry: bool) -> list[dict]:
@@ -676,6 +684,14 @@ def main() -> int:
             "请求Body": mask(req_body)[:1000],
             "响应Body": mask(_s(raw))[:1000],
         }
+        # 【审查修复·P2】UI 线索必须在截断前算：write_reports 旧版对已截断到 1000
+        # 字符的"响应Body"做 json.loads——超长响应截断后不再是合法 JSON，loads 抛
+        # 异常被 except 吞掉，UI 线索（空值字段/裂图 URL）静默丢失。这里用**完整**
+        # parsed 先算好塞进私有键，write_reports 优先消费（空列表字段见 ui_hints）。
+        if not args.dry_run:
+            hints_now = ui_hints(parsed)
+            if hints_now:
+                row["_ui_hints"] = hints_now
         results.append(row)
         flag = {"PASS": "  PASS", "FAIL": "× FAIL", "N/A": "-  N/A", "ERROR": "! ERROR"}[verdict]
         print(f"[{idx:>2}/{len(cases)}] {flag}  {action}  {name}  ({cost}ms) {errmsg[:60]}")
@@ -736,10 +752,14 @@ def write_reports(results, cases_doc, cfg, run_id, out_dir, elapsed, pre_not_run
 
     # UI 线索附进"错误信息"列：批量探活也能给出错版前因的第一手信号
     for r in results:
-        try:
-            hints = ui_hints(json.loads(r.get("响应Body") or "{}"))
-        except Exception:
-            hints = ""
+        # 【审查修复·P2】优先消费主循环用完整响应算好的 _ui_hints（见 run 主循环），
+        # 仅对没有该键的行（旧产物回灌/单独调用）回落到解析截断的"响应Body"。
+        hints = str(r.pop("_ui_hints", "") or "")
+        if not hints:
+            try:
+                hints = ui_hints(json.loads(r.get("响应Body") or "{}"))
+            except Exception:
+                hints = ""
         if hints:
             prev = str(r.get("错误信息") or "")
             r["错误信息"] = (prev + "；UI线索: " + hints) if prev else ("UI线索: " + hints)

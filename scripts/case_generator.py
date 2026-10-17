@@ -320,6 +320,52 @@ def gen_field_mutations(contract, base, action):
                                        cleanup={"required": True, "actions": ["delete_fixture"]},
                                        note="合法可选/可空形态被拒绝时记录过度校验缺陷"))
 
+        # 【审查修复·P0 嵌套变异守卫】类型/长度/枚举类**顶层**变异对嵌套点路径字段
+        # （data.items[].name）不成立：p[name]=bad 会把整条点路径当顶层键，变异根本
+        # 没作用到嵌套结构——请求 = 合法 base + 顶层多余键 → 大概率成功 →
+        # "应被拒绝"用例批量假 FAIL 进台账；且其 check_key 被无效用例"兑现"，
+        # 约束对账门禁永远查不出这类缺口（对账失真）。与 W22（B-MISS/B-OVER）
+        # 同口径：降级 TODO 留痕，不产无效用例；下方 G-FORBID 分支自带同款守卫。
+        if _is_nested_path(name):
+            # 【审查修复·P0-2 对账对齐】占位按字段声明的约束**分型**产出（TODO-B-TYPE /
+            # TODO-B-LEN-* / TODO-B-ENUM / TODO-B-NUM-*），derive_key 剥 TODO- 前缀后按
+            # 既有 _MECH_PREFIXES 解析兑现对应约束 key——此前统一叫 TODO-B-MUT，前缀表
+            # 无对应条目，wrong_type / 长度边界 / invalid_enum 的分母 key 永无交付可对，
+            # reconcile 每轮刷嵌套字段假缺口（test_review_fixes_lock 锁定此闭环）。
+            # 占位条件与 check_key.required_checks 分母声明严格同源：长度上限看发现档
+            # big_cap、below_minimum 仅 min_len>=2、at_minimum 需无枚举、数值仅在无
+            # 长度约束时——宁多产占位不留缺口。
+            _cap = discovery_profile.get("big_cap")
+            _todos = []
+            if type_bad_for(f, ftype, str_seq) is not None:
+                _todos.append(("B-TYPE", "类型错误"))
+            if f.get("max_len") and f["max_len"] <= _cap:
+                _todos.append(("B-LEN-OVER", "长度超限"))
+                _todos.append(("B-LEN-EDGE", "长度恰好上限"))
+            if f.get("min_len") and int(f["min_len"]) >= 2:
+                _todos.append(("B-LEN-UNDER", "长度低于下限"))
+            if f.get("min_len") and int(f["min_len"]) >= 1 and not f.get("enum"):
+                _todos.append(("B-LEN-MIN", "长度等于下限"))
+            if f.get("enum"):
+                _todos.append(("B-ENUM", "枚举越界"))
+            if not f.get("max_len") and not f.get("min_len"):
+                _mx, _mn = f.get("max_value"), f.get("min_value")
+                if isinstance(_mx, (int, float)) and not isinstance(_mx, bool):
+                    _todos.append(("B-NUM-OVER", "数值超限"))
+                    _todos.append(("B-NUM-EDGE", "数值恰好上限"))
+                if isinstance(_mn, (int, float)) and not isinstance(_mn, bool):
+                    _todos.append(("B-NUM-UNDER", "数值低于下限"))
+                    _todos.append(("B-NUM-MIN", "数值等于下限"))
+            for _pfx, _label in _todos:
+                out.append(_mk("TODO-%s-%s" % (_pfx, name),
+                               "%s（嵌套字段，需人工构造）：%s 的%s变异需在嵌套结构内进行" % (_label, name, _label),
+                               "B", "参数校验-嵌套", dict(base), {"success": True}, action=action,
+                               priority="P1", source="generator:field_mutation:nested",
+                               enabled=False, needs="manual",
+                               note="嵌套点路径字段的约束变异无法在顶层参数上安全变异，降级人工构造；"
+                                    "本条不参与执行（enabled=False/needs=manual），expect 仅供人工构造时参考"))
+            continue
+
         # 2) 类型错误 → 应被拒绝。字符串字段轮流取不同非法形态，避免全部打同一分支
         bad = type_bad_for(f, ftype, str_seq)
         if bad is not None:
@@ -394,6 +440,47 @@ def gen_field_mutations(contract, base, action):
                                action=action, priority="P1", source="generator:length_min",
                                note="恰好等于最小长度应被接受（off-by-one）；后端按字节校验会在此暴露口径差异，记待确认"))
 
+        # 3c) 【审查修复·P1-3 数值边界】契约的 minLength/minimum/maximum 约束
+        #     （contract_parser 提取为 min_value/max_value）此前没有任何生成器消费
+        #     ——数值 off-by-one 整类漏测（上限+1 被放行、恰好上限被拒都测不出）。
+        #     仅对未声明长度约束的字段构造（与 B-LEN 互斥：字符串边界走 3/3b，
+        #     数值边界走这里；同字段并存两类约束属解析噪音，优先既有长度口径，
+        #     check_key 分母用同款守卫，两侧承诺严格对齐）。嵌套点路径字段已被
+        #     上方 _is_nested_path 守卫拦下，走不进本分支。
+        if not f.get("max_len") and not f.get("min_len"):
+            _mx, _mn = f.get("max_value"), f.get("min_value")
+            if isinstance(_mx, (int, float)) and not isinstance(_mx, bool):
+                p = dict(base)
+                p[name] = _mx + 1
+                out.append(_mk("B-NUM-OVER-%s" % name,
+                               "数值超限：%s=%r+1（应被拒绝）" % (name, _mx), "B", "参数校验-边界", p,
+                               {"success": False, "err_keywords": [name]},
+                               action=action, priority="P0", source="generator:number_over",
+                               note="超出契约声明的数值上限应被拒绝"))
+                p2 = dict(base)
+                p2[name] = _mx
+                out.append(_mk("B-NUM-EDGE-%s" % name,
+                               "数值边界内：%s 恰好 %r（应成功）" % (name, _mx), "B", "参数校验-边界", p2,
+                               {"success": True},
+                               action=action, priority="P1", source="generator:number_edge",
+                               note="恰好等于数值上限应被接受（off-by-one）；后端按字符串口径"
+                                    "校验数值时在此暴露口径差异，记待确认"))
+            if isinstance(_mn, (int, float)) and not isinstance(_mn, bool):
+                p = dict(base)
+                p[name] = _mn - 1
+                out.append(_mk("B-NUM-UNDER-%s" % name,
+                               "数值低于下限：%s=%r-1（应被拒绝）" % (name, _mn), "B", "参数校验-边界", p,
+                               {"success": False, "err_keywords": [name]},
+                               action=action, priority="P0", source="generator:number_under",
+                               note="低于契约声明的数值下限应被拒绝"))
+                p2 = dict(base)
+                p2[name] = _mn
+                out.append(_mk("B-NUM-MIN-%s" % name,
+                               "数值等于下限：%s 恰好 %r（应成功）" % (name, _mn), "B", "参数校验-边界", p2,
+                               {"success": True},
+                               action=action, priority="P1", source="generator:number_min",
+                               note="恰好等于数值下限应被接受（off-by-one）"))
+
         # 4) 内容类字段的安全注入用例已升级为清单驱动：见 gen_security_payload_cases()
         #    （assets/security_payloads.json，按语义标签选载荷），此处不再内联生成。
 
@@ -434,7 +521,11 @@ def gen_combination_cases(contract, base, action):
     """
     out = []
     fields = [f for f in (contract.get("request_fields") or [])
-              if f.get("name") and type_bad_for(f, (f.get("type") or "").lower()) is not None]
+              if f.get("name") and type_bad_for(f, (f.get("type") or "").lower()) is not None
+              # 【审查修复·P0 嵌套变异守卫】组合变异同样只在顶层成立：嵌套点路径
+              # 字段 p[name]=bad 不作用于嵌套结构，组合用例 = 合法 base + 顶层
+              # 多余键，"应被拒绝"断言必然批量假 FAIL。与 gen_field_mutations 同口径剔除。
+              and not _is_nested_path(f["name"])]
     reps = fields[:COMBO_MAX_FIELDS]
     n = 0
     for i in range(len(reps)):
@@ -565,6 +656,17 @@ def gen_security_payload_cases(contract, base, action, skipped=None):
     out = []
     for f in (contract.get("request_fields") or []):
         name = f["name"]
+        # 【审查修复·P0 嵌套变异守卫】载荷注入只在顶层成立：嵌套点路径字段的
+        # p[name]=payload 不作用于嵌套结构，"应被拦截"断言会批量假 FAIL。
+        # 与 payload_skipped 同机制留痕（不静默消失），供产物点名。
+        if _is_nested_path(name):
+            if skipped is not None:
+                skipped.append({
+                    "field": name,
+                    "semantics": f.get("semantics") or [],
+                    "reason": "嵌套点路径字段，无法在顶层注入载荷，需人工在结构内构造",
+                })
+            continue
         if not _is_content_field(f):
             if skipped is not None:
                 skipped.append({

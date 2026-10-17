@@ -138,7 +138,13 @@ def harvest(report: dict, subject_name: str = "") -> list:
     不传则留空，绝不拿用例名顶替——那会让"谁依赖谁"在文档里读错。
     """
     out = []
-    for rec in report.get("results") or []:
+    # 【审查修复·P1-1】执行报告有两种数据键：flow.py 中间产物 report 用 results，
+    # 而 SKILL.md 自检命令指向的 api_test_report_full.json 用 cases——旧版只认
+    # results，对官方文档指向的文件恒收 0 条候选，前置条件扫描静默失效
+    # （预筛 0 条 → 后续模型抽取/事实提取全跳过，不报错也不出结果）。
+    # 优先 results，为空再看 cases，两者皆空保持原行为（0 条）。
+    rows = report.get("results") or report.get("cases") or []
+    for rec in rows:
         if not isinstance(rec, dict) or not is_failure(rec):
             continue
         text = response_text(rec)

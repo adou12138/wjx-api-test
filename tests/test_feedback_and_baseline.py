@@ -12,9 +12,17 @@ import regression
 import pattern_feedback
 
 
+def _enter_ctx(tc, cm):
+    """【审查修复·测试环境兼容】TestCase.enterContext 是 Python 3.11+ API，
+    本机 3.9 上 3 个用例直接 AttributeError——手动进上下文并注册清理，语义等价。"""
+    val = cm.__enter__()
+    tc.addCleanup(cm.__exit__, None, None, None)
+    return val
+
+
 class TestRegressionBaseline(unittest.TestCase):
     def test_baseline_round_trip(self):
-        p = Path(self.enterContext(tempfile.TemporaryDirectory())) / "baseline.json"
+        p = Path(_enter_ctx(self, tempfile.TemporaryDirectory())) / "baseline.json"
         regression.save_baseline(p, [
             {"case_id": "C1", "contract_hash": "h1", "expectations": {"last_error": ""}},
         ])
@@ -49,10 +57,10 @@ class TestRegressionBaseline(unittest.TestCase):
 
 class TestPatternFeedback(unittest.TestCase):
     def _pool(self):
-        return Path(self.enterContext(tempfile.TemporaryDirectory())) / "pattern_candidates.md"
+        return Path(_enter_ctx(self, tempfile.TemporaryDirectory())) / "pattern_candidates.md"
 
     def test_mine_only_defect_rows(self):
-        p = Path(self.enterContext(tempfile.TemporaryDirectory())) / "issues.csv"
+        p = Path(_enter_ctx(self, tempfile.TemporaryDirectory())) / "issues.csv"
         with open(p, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=["编号", "类型", "维度", "问题描述"])
             w.writeheader()

@@ -620,7 +620,7 @@ def check_resource_url(parsed, url_field="url", expect_kind="", timeout=10):
 
 
 # ===================== 补充维度断言 helper（AA–AD / B8-B9 / H6-H7 / 状态码语义） =====================
-def assert_no_over_validation(case_no, name, action, **kwargs):
+def assert_no_over_validation(case_no, case_name, action, **kwargs):
     """【反向盲区专用】断言"合法输入应被接受"——与 assert_validation() 方向相反。
 
     用于 B8 过度校验：文档标注为可选 / 可空的字段，传 null / 空串 / 不传 → **应成功**。
@@ -637,25 +637,25 @@ def assert_no_over_validation(case_no, name, action, **kwargs):
     errmsg = str(parsed.get("errormsg", "")) if isinstance(parsed, dict) else ""
 
     if code >= 500:
-        add_issue(f"[{case_no}]{name} 服务端返回 {code}", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 服务端返回 {code}", payload, fid=case_no,
                   expected="HTTP 2xx/4xx 业务错误", actual=f"HTTP {code}")
     if result is True:
         status, reason = "PASS", "合法输入被接受"
     elif result is False:
         status, reason = "FAIL", f"合法输入被拒绝（过度校验）: {errmsg}"
-        add_issue(f"[{case_no}]{name} 过度校验：该字段应允许为空/不传，却被拒绝：{errmsg}",
+        add_issue(f"[{case_no}]{case_name} 过度校验：该字段应允许为空/不传，却被拒绝：{errmsg}",
                   payload, fid=case_no, expected="result=true（合法输入应被接受）",
                   actual=f"result=false（{errmsg}）", severity="中")
     else:
         status, reason = "FAIL", f"未知result值: {result}"
-        add_issue(f"[{case_no}]{name} 返回未知result值: {result}", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 返回未知result值: {result}", payload, fid=case_no,
                   expected="result 为 true/false", actual=f"result={result}")
 
-    print(f"[{case_no}] {name} | 分类=B8过度校验 | HTTP={code} | {status}")
+    print(f"[{case_no}] {case_name} | 分类=B8过度校验 | HTTP={code} | {status}")
     print(f"        请求: {json.dumps(payload, ensure_ascii=False)}")
     print(f"        响应: {raw[:200]}")
     print(f"        说明: {reason}\n")
-    results.append({"case_no": case_no, "name": name, "category": "B8过度校验",
+    results.append({"case_no": case_no, "name": case_name, "category": "B8过度校验",
                     "action": action, "http_code": code, "status": status,
                     "reason": reason, "applicability": "适用",
                     "response": parsed if parsed is not None else raw})
@@ -878,14 +878,14 @@ def check_uniqueness(action, base_payload, unique_field, duplicate_value, expect
 
 
 
-def run_na(case_no, name, reason, category="适用性-N/A", dimension=""):
+def run_na(case_no, case_name, reason, category="适用性-N/A", dimension=""):
     """记录 N/A 用例：接口不支持该功能，跳过执行但记录在案。
     N/A 不计入通过率，但必须列出证明已做适用性判断。
 
     注意：N/A **不算**"已执行"。覆盖率门禁只看 status 在 EXECUTED_STATUSES 的记录，
     因此这里记录没有副作用——维度不会因为"标了 N/A"就被当成覆盖到了。"""
-    print(f"[{case_no}] {name} | 分类={category} | N/A | 跳过: {reason}")
-    results.append({"case_no": case_no, "name": name, "category": category,
+    print(f"[{case_no}] {case_name} | 分类={category} | N/A | 跳过: {reason}")
+    results.append({"case_no": case_no, "name": case_name, "category": category,
                     "action": "N/A", "http_code": None, "status": "N/A",
                     "reason": f"不适用: {reason}", "dimension": dimension,
                     "response": None})
@@ -1187,7 +1187,10 @@ def run_cleanup_manifest(manifest_path=None):
 # 历史缺陷：run() 未声明 dimension，dimension 落进 **kwargs 后被 build_payload 拼进真实请求，
 # 既污染了发给服务端的报文，又在结果记录处抛 NameError 使整条深度执行链崩溃。
 _CONTROL_KEYS = ("dimension", "category", "applicability", "contract", "err_exact",
-                 "expect_success", "case_no", "name", "action")
+                 "expect_success", "case_no", "tolerate_reject", "check_mode", "action")
+# 【审查修复·P0 name 撞名】`name` 不再列入：框架函数形参已改名 case_name，业务字段
+# name 现在可以安全进入 kwargs → 请求报文（此前保留键会把契约里的 name 业务参数
+# 从每条用例中静默剔除，必填字段场景整链路批量假 FAIL）。占位原则见 run() docstring。
 
 
 def _strip_control_keys(kwargs):
@@ -1198,7 +1201,7 @@ def _strip_control_keys(kwargs):
     return kwargs
 
 
-def run(case_no, name, action, expect_success, category,
+def run(case_no, case_name, action, expect_success, category,
         contract=False, err_exact=None, applicability="适用", dimension="",
         tolerate_reject=None, check_mode=None, **kwargs):
     """执行单个用例，记录结果并收集问题/观察。
@@ -1237,16 +1240,16 @@ def run(case_no, name, action, expect_success, category,
 
     # HTTP 5xx 一律记问题
     if code >= 500:
-        add_issue(f"[{case_no}]{name} 服务端返回 {code}", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 服务端返回 {code}", payload, fid=case_no,
                   expected="HTTP 2xx/4xx 业务错误", actual=f"HTTP {code}")
 
     if code == -1:
         status, reason = "ERROR", f"连接/网络异常(重试后仍失败): {raw[:120]}"
-        add_observation(f"[{case_no}]{name} 连接/网络异常(重试后仍失败)，归 ENV/网络问题",
+        add_observation(f"[{case_no}]{case_name} 连接/网络异常(重试后仍失败)，归 ENV/网络问题",
                         payload, fid=case_no, expected="网络可达，正常返回", actual=raw[:120])
     elif parsed is None:
         status, reason = "FAIL", f"响应非JSON: {raw[:120]}"
-        add_issue(f"[{case_no}]{name} 响应不是合法JSON", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 响应不是合法JSON", payload, fid=case_no,
                   expected="合法JSON响应", actual=raw[:120])
     elif result is True and expect_success:
         status, reason = "PASS", "result=true"
@@ -1255,11 +1258,11 @@ def run(case_no, name, action, expect_success, category,
             if not ok:
                 status = "FAIL"
                 reason = f"契约校验不通过: {msg}"
-                add_issue(f"[{case_no}]{name} 响应契约不通过: {msg}", payload, fid=case_no,
+                add_issue(f"[{case_no}]{case_name} 响应契约不通过: {msg}", payload, fid=case_no,
                           expected="契约字段与类型齐全", actual=msg)
     elif result is True and not expect_success:
         status, reason = "FAIL", "期望失败却返回成功（校验未生效）"
-        add_issue(f"[{case_no}]{name} 期望校验失败但实际成功（参数校验缺失）", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 期望校验失败但实际成功（参数校验缺失）", payload, fid=case_no,
                   expected="result=false（被校验拦截）", actual=f"result=true（{errmsg}）")
     elif result is False and not expect_success:
         if err_exact:
@@ -1267,7 +1270,7 @@ def run(case_no, name, action, expect_success, category,
                 status, reason = "PASS", f"result=false 且命中预期错误({errmsg})"
             else:
                 status, reason = "FAIL", f"错误语义不准确，期望包含{err_exact}，实际: {errmsg}"
-                add_issue(f"[{case_no}]{name} 错误语义不准确：期望包含{err_exact}，实际「{errmsg}」",
+                add_issue(f"[{case_no}]{case_name} 错误语义不准确：期望包含{err_exact}，实际「{errmsg}」",
                           payload, fid=case_no, expected=f"错误含{err_exact}", actual=errmsg)
         else:
             # 【反假通过 W1】未断言具体错误文案时，不得把任何 result=false 直接判 PASS：
@@ -1284,7 +1287,7 @@ def run(case_no, name, action, expect_success, category,
             # W1 的目标就是"可人工翻案"，翻案正需要这两列；只传 http_code 会让
             # 待确认行的采集列恒空，与同函数 add_issue 路径证据链不一致。
             add_finding(fid=str(case_no), kind="待确认",
-                        desc=f"[{case_no}]{name} 异常用例被拒绝，但未断言具体错误文案，"
+                        desc=f"[{case_no}]{case_name} 异常用例被拒绝，但未断言具体错误文案，"
                              f"拒绝原因可能与测试意图无关：{errmsg}",
                         payload=payload,
                         expected="拒绝文案指向测试意图的目标字段名，或补 err_exact 后重跑",
@@ -1313,19 +1316,19 @@ def run(case_no, name, action, expect_success, category,
                         _m.get("target_action", ""), _m.get("match_reason", ""))
                 add_observation(
                     "[{}]{} 前置条件未满足（不计缺陷）：{}{}".format(
-                        case_no, name, reason, _mtag),
+                        case_no, case_name, reason, _mtag),
                     payload, fid=case_no, expected="先满足前置条件再重跑该用例",
                     actual=f"被拒绝：{errmsg}", dimension=dimension,
                     attribution=("%s:先调 %s" % (att.get("category"), att.get("evidence_action"))
                                  if att.get("evidence_action") else att.get("category")))
             else:
                 status, reason = "FAIL", f"期望成功却失败: {errmsg}"
-                add_issue(f"[{case_no}]{name}：本应成功，但实际失败：{errmsg}", payload, fid=case_no,
+                add_issue(f"[{case_no}]{case_name}：本应成功，但实际失败：{errmsg}", payload, fid=case_no,
                           expected="成功", actual=f"失败：{errmsg}",
                           attribution=att.get("category"))
     else:
         status, reason = "FAIL", f"未知result值: {result}"
-        add_issue(f"[{case_no}]{name} 返回未知result值: {result}", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 返回未知result值: {result}", payload, fid=case_no,
                   expected="result 为 true/false", actual=f"result={result}")
 
     vid = None
@@ -1345,25 +1348,25 @@ def run(case_no, name, action, expect_success, category,
     if status == "PASS" and expect_success and not contract and not _deep_check:
         global shallow_passes
         shallow_passes += 1
-        add_observation(f"[{case_no}]{name} 浅用例：仅断言 result=true，未校验契约字段或追加增强断言",
+        add_observation(f"[{case_no}]{case_name} 浅用例：仅断言 result=true，未校验契约字段或追加增强断言",
                         payload, fid=case_no, expected="建议 contract=True 或追加增强断言",
                         actual="仅 result=true", severity="低")
 
-    print(f"[{case_no}] {name} | 分类={category} | HTTP={code} | {status}")
+    print(f"[{case_no}] {case_name} | 分类={category} | HTTP={code} | {status}")
     print(f"        请求: {json.dumps(payload, ensure_ascii=False)}")
     print(f"        响应: {raw[:260]}")
     if status == "PASS":
         print(f"        说明: {reason}")
     print()
 
-    results.append({"case_no": case_no, "name": name, "category": category,
+    results.append({"case_no": case_no, "name": case_name, "category": category,
                     "action": action, "http_code": code, "status": status,
                     "reason": reason, "applicability": applicability, "dimension": dimension,
                     "response": parsed if parsed is not None else raw})
     return parsed, vid
 
 
-def assert_validation(case_no, name, action, err_exact=None, applicability="适用", dimension="", **kwargs):
+def assert_validation(case_no, case_name, action, err_exact=None, applicability="适用", dimension="", **kwargs):
     """【参数校验专用】断言"非法/缺失/类型错误/枚举越界 输入 → 应被【拒绝】"。
 
     B 维度（参数校验）的标准用法，专为避免"把非法输入断言成应当成功"的盲区而封装：
@@ -1400,17 +1403,17 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
 
     # HTTP 5xx 一律记问题
     if code >= 500:
-        add_issue(f"[{case_no}]{name} 服务端返回 {code}", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 服务端返回 {code}", payload, fid=case_no,
                   expected="HTTP 2xx/4xx 业务错误", actual=f"HTTP {code}")
 
     if code == -1:
         status, reason = "ERROR", f"连接/网络异常(重试后仍失败): {raw[:120]}"
-        add_observation(f"[{case_no}]{name} 连接/网络异常(重试后仍失败)，归 ENV/网络问题",
+        add_observation(f"[{case_no}]{case_name} 连接/网络异常(重试后仍失败)，归 ENV/网络问题",
                         payload, fid=case_no, expected="网络可达，正常返回", actual=raw[:120])
     elif result is True:
         # 关键：非法输入被接受 = 参数校验缺失 缺陷（绝不是"测试通过"）
         status, reason = "FAIL", "非法/缺失输入被接受（参数校验未生效）"
-        add_issue(f"[{case_no}]{name} 非法/缺失参数未被拒绝（校验缺失）", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 非法/缺失参数未被拒绝（校验缺失）", payload, fid=case_no,
                   expected="result=false（被校验拦截）", actual=f"result=true（{errmsg}）",
                   severity="中")
     elif result is False:
@@ -1423,7 +1426,7 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
                 # 错误文案与测试意图不符（错对象名/占位未渲染/根因被掩盖）——这是真实
                 # 缺陷，不得降级成 PASS + 低危观察。run() 同场景判 FAIL，这里同样判。
                 status, reason = "FAIL", f"错误语义不具体: 期望含{err_exact}, 实际「{errmsg}」"
-                add_issue(f"[{case_no}]{name} 已拒绝但错误语义不具体(H2)：期望含{err_exact}，实际「{errmsg}」",
+                add_issue(f"[{case_no}]{case_name} 已拒绝但错误语义不具体(H2)：期望含{err_exact}，实际「{errmsg}」",
                           payload, fid=case_no, expected=f"错误含{err_exact}", actual=errmsg,
                           severity="中")
         else:
@@ -1431,7 +1434,7 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
             status = "待确认"
             reason = (f"已拒绝({errmsg})，但未断言具体错误文案——拒绝原因可能与测试意图无关，需人工确认")
             add_finding(fid=str(case_no), kind="待确认",
-                        desc=f"[{case_no}]{name} 参数校验用例被拒绝，但未断言具体错误文案，"
+                        desc=f"[{case_no}]{case_name} 参数校验用例被拒绝，但未断言具体错误文案，"
                              f"拒绝原因可能与测试意图无关：{errmsg}",
                         payload=payload,
                         expected="拒绝文案指向测试意图的目标字段，或补 err_exact 后重跑",
@@ -1439,17 +1442,17 @@ def assert_validation(case_no, name, action, err_exact=None, applicability="适�
                         severity="高", dimension=dimension, **_ev)
     else:
         status, reason = "FAIL", f"未知result值: {result}"
-        add_issue(f"[{case_no}]{name} 返回未知result值: {result}", payload, fid=case_no,
+        add_issue(f"[{case_no}]{case_name} 返回未知result值: {result}", payload, fid=case_no,
                   expected="result 为 true/false", actual=f"result={result}")
 
-    print(f"[{case_no}] {name} | 分类=参数校验 | HTTP={code} | {status}")
+    print(f"[{case_no}] {case_name} | 分类=参数校验 | HTTP={code} | {status}")
     print(f"        请求: {json.dumps(payload, ensure_ascii=False)}")
     print(f"        响应: {raw[:260]}")
     if status == "PASS":
         print(f"        说明: {reason}")
     print()
 
-    results.append({"case_no": case_no, "name": name, "category": "参数校验",
+    results.append({"case_no": case_no, "name": case_name, "category": "参数校验",
                     "action": action, "http_code": code, "status": status,
                     "reason": reason, "applicability": applicability, "dimension": dimension,
                     "response": parsed if parsed is not None else raw})
@@ -1726,7 +1729,9 @@ def main():
 
     # ===== v3.5 新增能力示例（按需启用，替换为你的接口字段） =====
     # 过度校验示例（B8）：文档标注可选/可空的字段，不传/null/空串/空数组四态都应【成功】
-    # ok, msg = assert_no_over_validation("B8-1", "可选字段 background_image 不传", "1000107",
+    # （签名 assert_no_over_validation(case_no, case_name, action, **params)，返回 (ok, parsed)，
+    #  失败时已自动记入问题台账——这里只消费 ok；待测字段的"不传"形态就是不出现在 kwargs 里）
+    # ok, parsed_resp = assert_no_over_validation("B8-1", "可选字段 background_image 不传", "1000107",
     #     creater=CREATER_MAIN, title="过度校验测试", page_type=0, publish=False,
     #     html_content=html_with_title("过度校验测试"))
     # 四态检测（读接口返回结构直接回写写接口的场景必测）：

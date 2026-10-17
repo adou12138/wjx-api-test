@@ -90,9 +90,21 @@ def _dim_match(case_dim, case_cat, key) -> bool:
     if not k:
         return False
     d, c = _norm(case_dim), _norm(case_cat)
-    if d == k or (d and d.startswith(k)):
-        return True
-    return bool(c) and (c == k or c.startswith(k))
+
+    # 【审查修复·P2】前缀匹配必须落在词段边界：维度码是紧凑字母串（A/B/AB/AC…），
+    # 旧版 d.startswith(key) 会让声明类别 "A" 吃掉 "AB" 维度的执行记录——A 明明
+    # 一条没测、对账却显示已覆盖（类别覆盖虚高，漏测被藏住）。边界规则：前缀之后
+    # **不是字母**才算同族（数字后缀是维度细分，AF1/AF2 属 AF 族，须被 "AF" 声明
+    # 认领——test_case_coverage 锁定；字母续缀则是另一维度码，"AB" 不属 "A" 族）；
+    # 中文类别（"参数校验"匹配"参数校验-边界"）走同一判定。
+    def _hit(v: str) -> bool:
+        if not v:
+            return False
+        if v == k:
+            return True
+        return v.startswith(k) and (len(v) == len(k) or not v[len(k)].isalpha())
+
+    return _hit(d) or _hit(c)
 
 
 def compute(plan, results, expect_categories, exempt_categories) -> dict:

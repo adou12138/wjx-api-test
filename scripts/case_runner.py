@@ -1257,8 +1257,13 @@ MANUAL_CHECKS = {
 
 # 与 run()/assert_validation() 签名同名的框架控制键：若业务参数里出现同名键，
 # 会让 Python 在以 **params 展开时抛 "got multiple values for argument"，整条链路直接崩溃。
+# 【审查修复·P0 name 撞名】`name` 已移出本表：框架函数形参改名 case_name 后，业务字段
+# name 不再与签名冲突，可正常进入请求报文（此前每条用例的 name 业务参数都被静默剔除，
+# 契约含必填 name 字段时整轮批量假 FAIL 进缺陷台账）。新增 tolerate_reject / check_mode
+# （run() 的命名参数，此前漏列——业务参数撞名会被吞进命名参数而非进报文，静默失效）。
 RESERVED_PARAM_KEYS = ("action", "dimension", "category", "applicability",
-                       "contract", "err_exact", "expect_success", "case_no", "name")
+                       "contract", "err_exact", "expect_success", "case_no",
+                       "tolerate_reject", "check_mode")
 
 
 def _sanitize_params(case):

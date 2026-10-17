@@ -50,6 +50,13 @@ CONSTRAINT_TYPES = (
 # 机械用例 ID 前缀 → 约束类型。
 # 长前缀必须排在短前缀之前：否则 "B-LEN-OVER-x" 可能被更短的通用规则先截走。
 _MECH_PREFIXES = (
+    # 【审查修复·P1-3】B-NUM 系列（数值边界，case_generator 3c 分支）与 B-LEN
+    # 系列映射到同一组约束型 key——同一字段不会两类并存（生成器/分母都有
+    # max_len 互斥守卫），key 不冲突。长前缀优先原则照旧。
+    ("B-NUM-UNDER-", "below_minimum"),
+    ("B-NUM-MIN-", "at_minimum"),
+    ("B-NUM-OVER-", "above_maximum"),
+    ("B-NUM-EDGE-", "at_maximum"),
     ("B-LEN-UNDER-", "below_minimum"),
     ("B-LEN-MIN-", "at_minimum"),
     ("B-LEN-OVER-", "above_maximum"),
@@ -189,6 +196,23 @@ def required_checks(contract, warnings=None):
         if f.get("min_len") and int(f["min_len"]) >= 1 and not f.get("enum"):
             out.append(_chk("at_minimum", name,
                             "恰好等于长度下限 %s 应成功（边界 off-by-one）" % f["min_len"]))
+        # 【审查修复·P1-3 数值边界分母】契约声明了 min_value/max_value 的字段，
+        # 生成器产 B-NUM-OVER/EDGE/UNDER/MIN 四件套（case_generator 3c 分支），
+        # 分母必须同步声明——否则数值边界用例漏产时门禁无感（off-by-one 整类
+        # 漏测正是 P1-3 要堵的洞）。与生成器同款互斥守卫：声明了长度约束的字段
+        # 边界由上方 B-LEN 分母覆盖，不再重复声明同 key（虚增缺口一倍）。
+        if not f.get("max_len") and not f.get("min_len"):
+            _mx, _mn = f.get("max_value"), f.get("min_value")
+            if isinstance(_mx, (int, float)) and not isinstance(_mx, bool):
+                out.append(_chk("above_maximum", name,
+                                "超出数值上限 %s 应被拒绝" % _mx))
+                out.append(_chk("at_maximum", name,
+                                "恰好等于数值上限 %s 应成功（边界 off-by-one）" % _mx))
+            if isinstance(_mn, (int, float)) and not isinstance(_mn, bool):
+                out.append(_chk("below_minimum", name,
+                                "低于数值下限 %s 应被拒绝" % _mn))
+                out.append(_chk("at_minimum", name,
+                                "恰好等于数值下限 %s 应成功（边界 off-by-one）" % _mn))
         if f.get("enum"):
             out.append(_chk("invalid_enum", name,
                             "枚举越界值应被拒绝（契约声明 %d 个取值）"

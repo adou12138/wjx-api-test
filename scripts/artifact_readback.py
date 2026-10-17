@@ -312,6 +312,17 @@ def run_readback(dirpath=".", issues_csv=None, report_json=None,
         all_issues += check_csv(csv_path, expect_cols=expect_cols,
                                 expect_rows=n_findings)
 
+    # 【审查修复·P1-2】目录里既没找到台账也没找到报告时，旧版 all_issues 为空 →
+    # _print_report 打印"✓ 产物可交付"且 rc=0——空目录/路径给错/产物没落盘被
+    # 误判为交付就绪，回读门禁形同虚设。改为显式 error：没有可回读的产物
+    # 就不是"通过"，必须让人看见。
+    if not csv_path and not rep:
+        all_issues.append(_issue(
+            ERROR, "NO_ARTIFACTS",
+            "目录 %s 里既没有 api_test_issues.csv 也没有 *_report_full.json——"
+            "没有可回读的产物（确认产物目录/路径是否给对、产物是否已落盘）"
+            % (dirpath or ".")))
+
     summary = {
         "checked_csv": bool(csv_path),
         "issues_csv": csv_path or "",

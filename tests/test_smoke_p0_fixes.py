@@ -39,7 +39,7 @@ class TestRequestBodyRecording(unittest.TestCase):
             rows = [{"序号": 1, "action": "1000107", "名称": "n", "模块": "", "端点": "default.aspx",
                      "HTTP": 200, "判定": "FAIL", "耗时ms": 1, "错误信息": "boom",
                      "请求Body": '{"action":"1000107","appid":"1"}'}]
-            out = Path(self.enterContext(_tmpdir()))
+            out = Path(_enter_ctx(self, _tmpdir()))
             sr.write_reports(rows, {"cases": []}, cfg, "t1", str(out), 0.1)
             import csv as _csv
             with open(out / "smoke_results_t1.csv", encoding="utf-8-sig") as f:
@@ -102,7 +102,7 @@ class TestUnifiedLedger(unittest.TestCase):
         rows = [{"序号": 1, "action": "1000107", "名称": "n", "模块": "", "端点": "default.aspx",
                  "HTTP": 500, "判定": "FAIL", "耗时ms": 1, "错误信息": "boom",
                  "请求Body": '{"action":"1000107","sign":"1234"}', "响应Body": '{"errmsg":"boom"}'}]
-        out = Path(self.enterContext(_tmpdir()))
+        out = Path(_enter_ctx(self, _tmpdir()))
         sr.write_reports(rows, {"cases": []}, cfg, "t2", str(out), 0.1)
         with open(out / "smoke_issues_t2.csv", encoding="utf-8-sig") as f:
             issues = list(_csv.DictReader(f))
@@ -124,7 +124,7 @@ class TestUnifiedLedger(unittest.TestCase):
         rows = [{"序号": 1, "action": "1", "名称": "n", "模块": "", "端点": "",
                  "HTTP": 0, "判定": "ERROR", "耗时ms": 1, "错误信息": "timeout",
                  "请求Body": "{}", "响应Body": ""}]
-        out = Path(self.enterContext(_tmpdir()))
+        out = Path(_enter_ctx(self, _tmpdir()))
         sr.write_reports(rows, {"cases": []}, cfg, "t3", str(out), 0.1)
         with open(out / "smoke_issues_t3.csv", encoding="utf-8-sig") as f:
             issues = list(_csv.DictReader(f))
@@ -164,6 +164,14 @@ class TestTlsToggle(unittest.TestCase):
 def _tmpdir():
     import tempfile
     return tempfile.TemporaryDirectory()
+
+
+def _enter_ctx(tc, cm):
+    """【审查修复·测试环境兼容】TestCase.enterContext 是 Python 3.11+ API，
+    本机 3.9 上 6 个用例直接 AttributeError——手动进上下文并注册清理，语义等价。"""
+    val = cm.__enter__()
+    tc.addCleanup(cm.__exit__, None, None, None)
+    return val
 
 
 if __name__ == "__main__":

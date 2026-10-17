@@ -179,6 +179,21 @@ def p06_gen(c, ctx):
     out = []
     for f in _enum_fields(c):
         vals = [v for v, _ in f["enum"]]
+        # 【审查修复·P0 嵌套变异守卫】枚举越界值 p[name]=bad 只在顶层成立：
+        # 嵌套点路径字段（data.items[].type）的变异不作用于嵌套结构，
+        # "应被拒绝"断言必然假 FAIL。与 case_generator.gen_field_mutations
+        # 的 TODO-B-MUT 同口径：降级 TODO 留痕，不产无效用例。
+        # K-ENUM（枚举释义遍历）用 base 原样请求 + 响应侧检查，不受影响，照常生成。
+        if _is_nested_path(f["name"]):
+            out.append(_mk("TODO-B-ENUM-%s" % f["name"],
+                           "枚举越界（嵌套字段，需人工构造）：%s 传入枚举外值应被拒绝" % f["name"],
+                           "B", "参数校验-枚举", dict(ctx["base"]),
+                           {"success": False, "err_keywords": [f["name"]]},
+                           priority="P0", source="pattern:P06:nested",
+                           enabled=False, needs="manual",
+                           note="嵌套点路径字段的枚举越界需人工在结构内构造；"
+                                "本条不参与执行（enabled=False/needs=manual）"))
+            continue
         # 【W14】按值类型分别构造越界值：数值 +1000；字符串用非法占位。
         # 旧写法 max(["A","B"])+1000 抛 TypeError 且被 run() 吞掉——字符串枚举的
         # 越界用例（B-ENUM/K-ENUM）永久生成失败且无声。

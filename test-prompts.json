@@ -12,6 +12,6 @@
   {
     "id": 3,
     "prompt": "把这份清单里的接口全跑一遍，看哪些通",
-    "expected": "识别为冒烟路径（scripts/smoke_runner.py）；批量探活输出 PASS/FAIL/N/A/ERROR；不对单个接口做 30 维度深挖；N/A 需给原因而非静默跳过"
+    "expected": "识别为冒烟路径（scripts/smoke_runner.py）；批量探活输出 PASS/FAIL/N/A/ERROR；不对单个接口做 31 维度深挖；N/A 需给原因而非静默跳过"
   }
 ]

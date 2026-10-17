@@ -25,6 +25,7 @@ import html
 import json
 import os
 import re
+import sys
 
 # 【W46】含「示例」形态：示例段的标题（如「## 请求示例」）也要能被归属判定识别
 REQ_HINTS = ("请求参数", "请求字段", "请求体", "输入参数", "请求示例")
@@ -139,7 +140,11 @@ def _pick(cells, idx):
 def _parse_constraints(remark, desc=""):
     """从备注/说明里抽结构化约束：最大长度、最小长度、默认值、枚举、禁用子串。"""
     text = "%s %s" % (remark or "", desc or "")
-    out = {"max_len": None, "min_len": None, "default": None, "enum": [], "forbid": []}
+    out = {"max_len": None, "min_len": None, "default": None, "enum": [], "forbid": [],
+           # 【审查修复·P1 数值边界承载位】此前 minimum/maximum 没有任何字段承载位，
+           # OpenAPI 声明的数值范围在解析层整体蒸发——数值边界用例与对账分母
+           # 双侧一致不产（off-by-one 缺陷整类漏测且无告警）。新增 min_value/max_value。
+           "min_value": None, "max_value": None}
     m = MAX_RE.search(text)
     if m:
         out["max_len"] = int(m.group(1))
@@ -448,6 +453,15 @@ def _schema_to_fields(schema, required_names=None, spec=None, prefix="", depth=0
             cons["enum"] = [(e, str(e)) for e in schema["enum"]]
         if schema.get("maxLength") is not None:
             cons["max_len"] = schema["maxLength"]
+        # 【审查修复·P1】OpenAPI 标准约束键全量落地：minLength/minimum/maximum
+        # 此前被丢弃（scalar body 分支的触发条件认了 minimum/maximum，结果却不搬——
+        # 名实不符比不支持更糟），下边界整类静默不测。
+        if schema.get("minLength") is not None:
+            cons["min_len"] = schema["minLength"]
+        if schema.get("maximum") is not None:
+            cons["max_value"] = schema["maximum"]
+        if schema.get("minimum") is not None:
+            cons["min_value"] = schema["minimum"]
         if schema.get("default") is not None:
             cons["default"] = schema["default"]
         fields.append({
@@ -456,6 +470,7 @@ def _schema_to_fields(schema, required_names=None, spec=None, prefix="", depth=0
             "desc": str(schema.get("description", "")), "required": bool(required_names),
             "remark": str(schema.get("description", "")),
             "enum": cons["enum"], "max_len": cons["max_len"], "min_len": cons["min_len"],
+            "min_value": cons["min_value"], "max_value": cons["max_value"],
             "default": cons["default"], "forbid": cons["forbid"], "semantics": [],
             "nullable": bool(schema.get("nullable")) or "null" in str(schema.get("type", "")).split(","),
         })
@@ -468,6 +483,13 @@ def _schema_to_fields(schema, required_names=None, spec=None, prefix="", depth=0
             cons["enum"] = [(e, str(e)) for e in v["enum"]]
         if v.get("maxLength") is not None:
             cons["max_len"] = v["maxLength"]
+        # 【审查修复·P1】属性分支同步搬 minLength/minimum/maximum（与 scalar body 一致）
+        if v.get("minLength") is not None:
+            cons["min_len"] = v["minLength"]
+        if v.get("maximum") is not None:
+            cons["max_value"] = v["maximum"]
+        if v.get("minimum") is not None:
+            cons["min_value"] = v["minimum"]
         if v.get("default") is not None:
             cons["default"] = v["default"]
         full = "%s%s" % (prefix, k)
@@ -475,6 +497,7 @@ def _schema_to_fields(schema, required_names=None, spec=None, prefix="", depth=0
             "name": full, "type": str(v.get("type", "")), "desc": str(v.get("description", "")),
             "required": k in required_names, "remark": str(v.get("description", "")),
             "enum": cons["enum"], "max_len": cons["max_len"], "min_len": cons["min_len"],
+            "min_value": cons["min_value"], "max_value": cons["max_value"],
             "default": cons["default"], "forbid": cons["forbid"], "semantics": [],
             # 【W21】nullable 双口径：OpenAPI 3.x 的 nullable / JSON Schema 的 type 含 "null"。
             # 下游 check_key / case_generator 都读 f.get("nullable")，解析侧不产出
@@ -574,11 +597,28 @@ def parse_openapi(spec, action=None):
         cons = _parse_constraints(str(prm.get("description", "")), "")
         if "enum" in sc:
             cons["enum"] = [(e, str(e)) for e in sc["enum"]]
+        # 【审查修复·P2】Swagger 2.0 query/formData/path 参数的约束键此前被丢弃：
+        # 非 body 参数的 maxLength/minLength/maximum/minimum 直接落在参数对象（或其
+        # schema）上，旧代码只靠 description 正则——同一解析器 body 与参数两种口径
+        # 不一致（body 会提取 maxLength，参数不会）。与 body 分支统一：两处都查、搬全。
+        for _src in (sc, prm):
+            if not isinstance(_src, dict):
+                continue
+            if cons["max_len"] is None and _src.get("maxLength") is not None:
+                cons["max_len"] = _src["maxLength"]
+            if cons["min_len"] is None and _src.get("minLength") is not None:
+                cons["min_len"] = _src["minLength"]
+            if cons["max_value"] is None and _src.get("maximum") is not None:
+                cons["max_value"] = _src["maximum"]
+            if cons["min_value"] is None and _src.get("minimum") is not None:
+                cons["min_value"] = _src["minimum"]
         req_fields.append({
             "name": prm.get("name", ""), "type": str(sc.get("type", "")),
             "desc": str(prm.get("description", "")), "required": bool(prm.get("required")),
             "remark": str(prm.get("description", "")), "enum": cons["enum"],
-            "max_len": cons["max_len"], "min_len": cons["min_len"], "default": cons["default"],
+            "max_len": cons["max_len"], "min_len": cons["min_len"],
+            "min_value": cons["min_value"], "max_value": cons["max_value"],
+            "default": cons["default"],
             "forbid": cons["forbid"], "semantics": [],
             "nullable": bool(sc.get("nullable")) or "null" in str(sc.get("type", "")).split(","),
         })
@@ -644,7 +684,13 @@ def load_contract(path, action=None):
     if stripped.startswith("{") or stripped.startswith("["):
         try:
             obj = json.loads(stripped)
-        except Exception:
+        except Exception as e:
+            # 【审查修复·P2】坏 JSON 零提示降级：文件长得像 JSON 但解析失败（截断/
+            # 编码损坏/手写逗号错），旧版静默落到 parse_showdoc——把 JSON 文本当
+            # markdown 硬解析，产出 0 字段契约，后续"用例全是必填缺失"的排查无从
+            # 下手。降级照旧（文本里可能真混着文档段落），但先打出第一现场。
+            print("⚠️ 契约文件形如 JSON 但解析失败（%s: %s），降级按 showdoc 文档解析：%s"
+                  % (type(e).__name__, e, path), file=sys.stderr)
             obj = None
     elif str(path).lower().endswith((".yaml", ".yml")) or re.match(r"^(openapi|swagger)\s*:", stripped):
         obj = _load_yaml(raw, path)
