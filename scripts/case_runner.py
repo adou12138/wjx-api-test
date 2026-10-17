@@ -1346,8 +1346,11 @@ def exec_case(case, dry=False):
         return
 
     keys = expect.get("contract_keys")
-    if keys:
-        R.CONTRACT_KEYS = list(keys)
+    # 【审查修复·P0-3】总是写（含清空）：不带 contract_keys 的用例恢复 None，
+    # 防止上一条用例的键泄漏到本条。R 即 api_test_runner 模块，写入其全局
+    # CONTRACT_KEYS 后，run() 内 check_contract(keys=CONTRACT_KEYS) 读的正是它
+    # ——此前赋值只挂了个无人读的模块属性，check_contract 恒查默认三键。
+    R.CONTRACT_KEYS = list(keys) if keys else None
 
     params = _resolve_identity_placeholders(case, params)
     if params is None:

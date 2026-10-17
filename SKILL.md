@@ -1,6 +1,6 @@
 ---
 name: "wjx-api-test"
-version: "4.40.0"
+version: "4.41.0"
 agent_created: true
 author: TestCase
 category: api-testing

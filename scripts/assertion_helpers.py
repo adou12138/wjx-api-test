@@ -66,11 +66,20 @@ def assert_non_empty(items, label="断言集合"):
     return True, ""
 
 
-def check_contract(data):
-    """校验成功响应 data 字段与类型，返回 (ok, msg)。按接口改 CONTRACT_KEYS / 类型规则。"""
+def check_contract(data, keys=None):
+    """校验成功响应 data 契约字段，返回 (ok, msg)。
+
+    keys 显式传入时优先（api_test_runner 按用例的 expect.contract_keys 注入），
+    缺省回落本模块 CONTRACT_KEYS（默认 vid/sid/status，供人工按接口适配）。
+    """
     if not isinstance(data, dict):
         return False, "data 非对象"
-    missing = [k for k in CONTRACT_KEYS if k not in data]
+    # 【审查修复·P0-3】此前 case_runner 把用例契约键写到 R.CONTRACT_KEYS
+    # （api_test_runner 模块属性），而本函数被按值导入、读本模块全局——动态键
+    # 从未生效，恒查默认三键：不含三键的接口契约用例批量假 FAIL，恰好含三键
+    # 的接口漏检真实契约字段。keys 参数打通注入链。
+    wanted = list(keys) if keys is not None else list(CONTRACT_KEYS)
+    missing = [k for k in wanted if k not in data]
     if missing:
         return False, f"缺少契约字段: {missing}"
     return True, "契约字段齐全"

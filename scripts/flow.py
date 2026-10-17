@@ -237,25 +237,49 @@ def cleanup_step(exec_cfg, out_dir):
              ("；失败 %d 条，见清单" % len(fail)) if fail else ""))
 
 
+def _contract_hash_of(doc):
+    """契约哈希的单一出处（写基线/复测两侧必须同源，否则 STALE_BASELINE 永不触发）。"""
+    import regression as REG
+    # 【审查修复·P1-5】doc.get("contract_model") 此前恒为 None（generate 不产该键），
+    # 哈希 fallback 只含 action+coverage_plan——契约字段增删改不影响哈希，
+    # STALE_BASELINE 判定（regression.py 声明的核心保护）不可达。case_generator
+    # 已补产 contract_model（规范化契约子集），此键命中后契约任何字段/约束变化
+    # 都会换哈希；老产物无该键时回落原 fallback 口径。
+    model = doc.get("contract_model") or {
+        k: doc.get(k) for k in ("action", "coverage_plan") if k in doc}
+    return REG.contract_hash(model)
+
+
 def write_regression_artifacts(out_dir, doc):
     """执行收尾产出回归基线快照（regression.py 接入主链路）。"""
     import regression as REG
     cases = doc.get("cases") or []
-    chash = REG.contract_hash(doc.get("contract_model") or
-                              {k: doc.get(k) for k in ("action", "coverage_plan") if k in doc})
+    chash = _contract_hash_of(doc)
+    # 【审查修复·P1-6】expectations 此前只写 priority/dimension，last_error 恒空
+    # ——REGRESSED（修复引入新回归，四态之一）永不触发。补记本轮失败原因：
+    # 上轮失败原因 A、本轮失败原因 B≠A 才算"新回归"；通过/未执行记空串。
+    last_err = {}
+    for r in (R.results or []):
+        if r.get("status") in ("FAIL", "ERROR"):
+            last_err[r.get("case_no")] = str(r.get("reason") or "")
     entries = [{"case_id": c.get("id", ""), "contract_hash": chash,
                 "expectations": {"priority": c.get("priority", ""),
-                                 "dimension": c.get("dimension", "")}}
+                                 "dimension": c.get("dimension", ""),
+                                 "last_error": last_err.get(c.get("id"), "")}}
                for c in cases]
     path = os.path.join(out_dir, "regression_baseline.json")
     REG.save_baseline(path, entries)
     print("回归基线 -> %s（%d 条快照，--retest 可做复测四态判定）" % (path, len(entries)))
 
 
-def retest_report(baseline_path, results):
+def retest_report(baseline_path, results, doc=None):
     """复测判定：FIXED / STILL_FAILING / REGRESSED / STALE_BASELINE / UNBASELINED / BLOCKED_ENV。"""
     import regression as REG
-    return REG.retest_verdicts(REG.load_baseline(baseline_path), results)
+    # 【审查修复·P1-5】复测必须传当前契约哈希，否则 STALE_BASELINE 分支（契约
+    # 已变、旧快照不可信）被 None 短路，永远不可达。与写基线同源取哈希。
+    chash = _contract_hash_of(doc) if isinstance(doc, dict) else None
+    return REG.retest_verdicts(REG.load_baseline(baseline_path), results,
+                               current_contract_hash=chash)
 
 
 def resolve_contract_from_kb(action, kb=None):
@@ -681,10 +705,14 @@ def main():
     if args.retest:
         rows = []
         for r in R.results:
-            resp = r.get("response") if isinstance(r.get("response"), dict) else {}
-            rows.append({"case_id": r.get("case_no"), "passed": r.get("status") == "PASS",
-                         "error": str(resp.get("note") or "")})
-        verdicts = retest_report(args.retest, rows)
+            _ok = r.get("status") == "PASS"
+            # 【审查修复·P1-4】error 此前读 response.note（业务响应体没有该键，
+            # 恒空串）——BLOCKED_ENV 永不命中、REGRESSED 的 err 比较恒空。
+            # 复测错误语义在 reason 字段（网络异常文案、断言失败原因都在这），
+            # 且仅失败用例才算错误（PASS 的 reason 是通过说明，非错误）。
+            rows.append({"case_id": r.get("case_no"), "passed": _ok,
+                         "error": "" if _ok else str(r.get("reason") or "")})
+        verdicts = retest_report(args.retest, rows, doc=doc)
         vc = {}
         for v in verdicts:
             vc[v["verdict"]] = vc.get(v["verdict"], 0) + 1

@@ -98,5 +98,139 @@ class TestTerminalRepeatMainFailureGuard(unittest.TestCase):
         self.assertEqual(self._issues[0][1].get("severity"), "高")
 
 
+class TestRound2ContractKeyInjection(unittest.TestCase):
+    """【审查修复·P0-3 锁定】用例契约键必须真正到达 check_contract。
+
+    此前 case_runner 把键写到 R.CONTRACT_KEYS（无人读的死属性），check_contract
+    被按值导入、恒读 assertion_helpers 全局默认三键 vid/sid/status——契约用例
+    批量假 FAIL / 恰含三键的接口漏检。
+    """
+
+    def test_keys_param_overrides_default(self):
+        import assertion_helpers as AH
+        ok, msg = AH.check_contract({"a": 1, "b": 2}, keys=["a", "b"])
+        self.assertTrue(ok, msg)
+        ok, msg = AH.check_contract({"a": 1}, keys=["a", "b"])
+        self.assertFalse(ok)
+        self.assertIn("b", msg)
+
+    def test_none_falls_back_to_default_keys(self):
+        import assertion_helpers as AH
+        ok, _ = AH.check_contract({"vid": 1, "sid": 2, "status": 3}, keys=None)
+        self.assertTrue(ok)
+
+    def test_case_runner_writes_module_global_and_run_consumes(self):
+        """case_runner 写 R.CONTRACT_KEYS → R.check_contract(keys=...) 消费同一全局。"""
+        R.CONTRACT_KEYS = ["vid", "sid"]
+        try:
+            ok, msg = R.check_contract({"vid": 1, "sid": 2}, keys=R.CONTRACT_KEYS)
+            self.assertTrue(ok, msg)
+        finally:
+            R.CONTRACT_KEYS = None
+
+
+class TestRound2RetestChain(unittest.TestCase):
+    """【审查修复·P1-4/5/6 锁定】复测四态判定链路：error 来源 / 契约哈希 / last_error。"""
+
+    def setUp(self):
+        self._orig_results = R.results
+        R.results = []
+        self._tmp = __import__("tempfile").mkdtemp()
+
+    def tearDown(self):
+        R.results = self._orig_results
+        R.CONTRACT_KEYS = None
+
+    def _doc(self, title="t"):
+        return {
+            "contract_model": {
+                "action": "1000107",
+                "request_fields": [{"name": "title", "type": "string"}],
+                "response_fields": [],
+            },
+            "cases": [{"id": "c1", "dimension": "B", "priority": "P0"}],
+        }
+
+    def test_baseline_records_last_error_from_results(self):
+        import flow
+        R.results = [{"case_no": "c1", "status": "FAIL", "reason": "result=false 参数不足"}]
+        with __import__("io").StringIO() as buf, \
+                __import__("contextlib").redirect_stdout(buf):
+            flow.write_regression_artifacts(self._tmp, self._doc())
+        import json
+        data = json.load(open(os.path.join(self._tmp, "regression_baseline.json"),
+                              encoding="utf-8"))
+        self.assertEqual(data["entries"][0]["expectations"]["last_error"],
+                         "result=false 参数不足")
+
+    def test_env_error_reason_hits_blocked_env(self):
+        """reason 含网络词 → BLOCKED_ENV（此前 error 读 response.note 恒空，永不命中）。"""
+        import flow
+        import regression as REG
+        REG.save_baseline(os.path.join(self._tmp, "bl.json"),
+                          [{"case_id": "c1", "contract_hash": "h",
+                            "expectations": {"last_error": "e"}}])
+        rows = [{"case_id": "c1", "passed": False,
+                 "error": "连接/网络异常(重试后仍失败): timeout"}]
+        verdicts = flow.retest_report(os.path.join(self._tmp, "bl.json"), rows)
+        self.assertEqual(verdicts[0]["verdict"], "BLOCKED_ENV")
+
+    def test_contract_change_hits_stale_baseline(self):
+        """契约字段变化 → 哈希变 → STALE_BASELINE（此前不可达）。"""
+        import flow
+        with __import__("io").StringIO() as buf, \
+                __import__("contextlib").redirect_stdout(buf):
+            flow.write_regression_artifacts(self._tmp, self._doc())
+        doc2 = self._doc()
+        doc2["contract_model"]["request_fields"].append({"name": "extra", "type": "int"})
+        rows = [{"case_id": "c1", "passed": True, "error": ""}]
+        verdicts = flow.retest_report(
+            os.path.join(self._tmp, "regression_baseline.json"), rows, doc=doc2)
+        self.assertEqual(verdicts[0]["verdict"], "STALE_BASELINE")
+
+    def test_different_error_hits_regressed(self):
+        """上轮失败 A、本轮失败 B≠A → REGRESSED（此前 last_error 恒空，不可达）。"""
+        import flow
+        import regression as REG
+        REG.save_baseline(os.path.join(self._tmp, "bl.json"),
+                          [{"case_id": "c1", "contract_hash": "h",
+                            "expectations": {"last_error": "错误A"}}])
+        rows = [{"case_id": "c1", "passed": False, "error": "错误B"}]
+        verdicts = flow.retest_report(os.path.join(self._tmp, "bl.json"), rows)
+        self.assertEqual(verdicts[0]["verdict"], "REGRESSED")
+
+    def test_flow_reads_reason_not_response_note(self):
+        """复测行构造必须读 reason（静态锁定：response.note 路径已移除）。"""
+        with open(os.path.join(os.path.dirname(R.__file__), "flow.py"),
+                  encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertNotIn('resp.get("note")', src,
+                         "复测 error 又读回 response.note（业务响应体无该键，恒空）")
+
+
+class TestRound2GraphqlStrBody(unittest.TestCase):
+    """【审查修复·P1-7 锁定】主链路传 str body 时「HTTP 200 + errors」必须判 graphql_error。"""
+
+    def test_str_body_with_errors_is_graphql_error(self):
+        from adapters.graphql import GraphqlAdapter
+        resp = type("_Resp", (), {
+            "status_code": 200,
+            "body": '{"errors": [{"message": "boom"}]}'})()
+        cls = GraphqlAdapter().classify_response(resp)
+        self.assertEqual(cls.get("status"), "graphql_error")
+
+    def test_str_body_without_errors_still_ok(self):
+        from adapters.graphql import GraphqlAdapter
+        resp = type("_Resp", (), {"status_code": 200, "body": '{"data": {}}'})()
+        cls = GraphqlAdapter().classify_response(resp)
+        self.assertEqual(cls.get("status"), "ok")
+
+    def test_non_json_str_body_still_ok(self):
+        from adapters.graphql import GraphqlAdapter
+        resp = type("_Resp", (), {"status_code": 200, "body": "not-json"})()
+        cls = GraphqlAdapter().classify_response(resp)
+        self.assertEqual(cls.get("status"), "ok")
+
+
 if __name__ == "__main__":
     unittest.main()

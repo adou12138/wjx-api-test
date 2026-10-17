@@ -203,7 +203,10 @@ def _alias_cases(contract, base, action):
             p3 = dict(base)
             p3[an] = "alias_probe_value"
             out.append(_mk(
-                "LLM-ALIAS-BOTH",
+                # 【审查修复·P2】id 此前硬编码不带字段名——契约存在两组以上别名对时
+                # id 必重复，business_scenarios 门禁报 dup_id、case_generator 去重时
+                # 后一组的 BOTH 用例被静默丢弃。与上方 *-ONLY 同款带主字段后缀。
+                "LLM-ALIAS-%s-BOTH" % cn.upper(),
                 "兼容别名·同时传入：%s 与 %s 传不同值时以谁为准（契约未声明）" % (an, cn),
                 "C", "兼容别名", p3, {"success": True},
                 action=action, priority="P2", source="llm_fact:alias",

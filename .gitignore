@@ -42,3 +42,6 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# 过程文档不入库（本地留存）
+process/

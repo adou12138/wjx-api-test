@@ -714,6 +714,11 @@ def main():
     with open(args.facts[0] if isinstance(args.facts, list) else args.facts,
               encoding="utf-8") as fh:
         facts = json.load(fh)
+    if not isinstance(facts, dict):
+        # 【审查修复·P2】大模型把事实 JSON 产成数组是常见偏差——无守卫时
+        # verify() 的 facts.get("fields") 直接 AttributeError 崩溃（CLI 裸栈）。
+        ap.error("--facts 必须为对象形 JSON（顶层 fields/relations/unknowns），"
+                 "当前收到 %s" % type(facts).__name__)
 
     rows, clean = verify(facts, contract, text)
     merge(contract, clean)

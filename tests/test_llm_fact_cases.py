@@ -152,14 +152,36 @@ class TestAlias(unittest.TestCase):
         unk = [{"item": "html 与 html_content 同时传的优先级",
                 "reason": "契约只说是兼容参数，未说优先级", "must_not_assert": True}]
         cases = L.run(self._contract(unk), dict(BASE), "1000107", {})
-        c = next(x for x in cases if x["id"] == "LLM-ALIAS-BOTH")
+        # 【审查修复·P2 同步】id 改带主字段后缀（多组别名对时不再重复）
+        c = next(x for x in cases if x["id"] == "LLM-ALIAS-HTML_CONTENT-BOTH")
         self.assertFalse(c["enabled"])
         self.assertEqual(c["needs"], "manual")
         self.assertIn("must_not_assert", c["note"])
 
     def test_no_unknown_no_both_case(self):
         cases = L.run(self._contract(), dict(BASE), "1000107", {})
-        self.assertNotIn("LLM-ALIAS-BOTH", _ids(cases))
+        self.assertNotIn("LLM-ALIAS-HTML_CONTENT-BOTH", _ids(cases))
+
+    def test_two_alias_pairs_no_duplicate_ids(self):
+        """【审查修复·P2 锁定】两组别名对并存时 BOTH 用例 id 不得重复（此前后一组被静默丢弃）。"""
+        c = _contract(
+            req=[_field("html", role="alias", constraints={"alias_of": "html_content"},
+                        evidence="html_content的兼容参数"),
+                 _field("html_content", role="body_content"),
+                 _field("mobile", role="alias", constraints={"alias_of": "phone"},
+                        evidence="phone的兼容参数"),
+                 _field("phone", role="body_content")],
+            unknowns=[
+                {"item": "html 与 html_content 同时传的优先级",
+                 "reason": "契约只说是兼容参数，未说优先级", "must_not_assert": True},
+                {"item": "mobile 与 phone 同时传的优先级",
+                 "reason": "契约只说是兼容参数，未说优先级", "must_not_assert": True},
+            ])
+        base = dict(BASE, mobile="13800000000", phone="13800000000")
+        cases = L.run(c, base, "1000107", {})
+        both = [x["id"] for x in cases if x["id"].endswith("-BOTH")]
+        self.assertEqual(len(both), len(set(both)), "BOTH 用例 id 重复：%s" % both)
+        self.assertEqual(len(both), 2, "两组别名对应各产一条 BOTH，实得 %s" % both)
 
 
 class TestPublishFlag(unittest.TestCase):

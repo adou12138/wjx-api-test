@@ -1182,6 +1182,16 @@ def generate(contract_path, action=None, read_action=None, list_action=None, rea
         "name": contract.get("name"),
         "endpoint": contract.get("endpoint"),
         "source": contract.get("source"),
+        # 【审查修复·P1-5】回归基线的契约哈希此前无契约内容可算（flow 的
+        # doc.get("contract_model") 恒 None，只拿到 action+coverage_plan 的
+        # fallback）。此处落规范化契约子集，供 write_regression_artifacts /
+        # retest_report 同源取哈希——契约字段任何增删/约束变化都改变哈希，
+        # STALE_BASELINE 判定才真正可达。
+        "contract_model": {
+            "action": contract.get("action"),
+            "request_fields": contract.get("request_fields") or [],
+            "response_fields": contract.get("response_fields") or [],
+        },
         "op_type": app["op_type"],
         "is_intl": app["is_intl"],
         "business_domains": app["business_domains"],

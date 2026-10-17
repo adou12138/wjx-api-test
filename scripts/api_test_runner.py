@@ -87,6 +87,12 @@ from assertion_helpers import (  # noqa: E402
     check_error_code_mapping,
 )
 
+# 【审查修复·P0-3】当前用例的契约键：case_runner 执行每条用例前按
+# expect.contract_keys 写入（无声明写 None，防用例间键泄漏）。run() 内
+# check_contract(keys=CONTRACT_KEYS) 消费；None 时回落 assertion_helpers
+# 的默认键（vid/sid/status，供人工按接口适配）。
+CONTRACT_KEYS = None
+
 PERSONAL = load_personal_config()
 BASE_URL = PERSONAL.get("base_url", "")
 APPID = PERSONAL.get("appid", "")
@@ -1245,7 +1251,13 @@ def run(case_no, case_name, action, expect_success, category,
 
     if code == -1:
         status, reason = "ERROR", f"连接/网络异常(重试后仍失败): {raw[:120]}"
-        add_observation(f"[{case_no}]{case_name} 连接/网络异常(重试后仍失败)，归 ENV/网络问题",
+        # 【审查修复·P2】网络异常此前只自判 ERROR，归因文案硬编码"ENV"——
+        # attribution_engine 声称主链路共用却从未在此接线（ENV 分支要求
+        # error+retries）。补走统一归因，ENV 判据与冒烟链同源（重试在 call 内
+        # 部按 RETRY_COUNT 执行，此处传同值）。
+        _att = _ATTR.attribute(error=reason, retries=RETRY_COUNT)
+        add_observation(f"[{case_no}]{case_name} 连接/网络异常(重试后仍失败)，"
+                        f"归 {_att.get('category')}/网络问题",
                         payload, fid=case_no, expected="网络可达，正常返回", actual=raw[:120])
     elif parsed is None:
         status, reason = "FAIL", f"响应非JSON: {raw[:120]}"
@@ -1254,7 +1266,7 @@ def run(case_no, case_name, action, expect_success, category,
     elif result is True and expect_success:
         status, reason = "PASS", "result=true"
         if contract:
-            ok, msg = check_contract(parsed.get("data") or {})
+            ok, msg = check_contract(parsed.get("data") or {}, keys=CONTRACT_KEYS)
             if not ok:
                 status = "FAIL"
                 reason = f"契约校验不通过: {msg}"
@@ -1408,7 +1420,10 @@ def assert_validation(case_no, case_name, action, err_exact=None, applicability=
 
     if code == -1:
         status, reason = "ERROR", f"连接/网络异常(重试后仍失败): {raw[:120]}"
-        add_observation(f"[{case_no}]{case_name} 连接/网络异常(重试后仍失败)，归 ENV/网络问题",
+        # 【审查修复·P2】与 run() 同口径补统一归因（此前文案硬编码 ENV）。
+        _att = _ATTR.attribute(error=reason, retries=RETRY_COUNT)
+        add_observation(f"[{case_no}]{case_name} 连接/网络异常(重试后仍失败)，"
+                        f"归 {_att.get('category')}/网络问题",
                         payload, fid=case_no, expected="网络可达，正常返回", actual=raw[:120])
     elif result is True:
         # 关键：非法输入被接受 = 参数校验缺失 缺陷（绝不是"测试通过"）

@@ -59,6 +59,15 @@ class GraphqlAdapter(ApiAdapter):
                 body = _json.loads(body.decode("utf-8", errors="replace"))
             except ValueError:
                 body = None
+        elif isinstance(body, str):
+            # 【审查修复·P1-7】主链路注入点传的是已解码 str（api_test_runner 把
+            # raw 直接挂在 _Resp.body 上）——此前只认 bytes，str 既不解码也不是
+            # dict，恒判 ok：「HTTP 200 + errors」照旧假通过，W36 防假通过机制
+            # 整体失效。str 与 bytes 同口径尝试解析。
+            try:
+                body = _json.loads(body)
+            except ValueError:
+                body = None
         if isinstance(body, dict) and body.get("errors"):
             return {"status": "graphql_error", "errors": body["errors"]}
         return {"status": "ok"}
