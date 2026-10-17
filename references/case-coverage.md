@@ -7,11 +7,11 @@ wjx 已有两道门禁，但都是**声明 vs 触及**的维度级对账。读�
 | 缺口 | 机制 | 后果 |
 |---|---|---|
 | ① **AF 业务场景整类缺席无声** | `flow.py` 主链路**未接入** `business_scenarios`；AF 要人工单独跑再 `--merge`。`coverage_plan` 是**维度驱动**，AF1 不是声明维度 ⇒ 门禁根本不看它 | 唯一能测业务语义的一类用例可能 0 条；报告如常，看不出"业务场景压根没测" |
-| ② **没有逐条对账、没有计划清单落盘** | 无权威计划清单产物；`--only` 直接改写 `cases`（`case_runner.py:1247`）不留声明 | "生成 N 条、判了 M 条""哪些用例一条没留痕"在报告里查不到 |
+| ② **没有逐条对账、没有计划清单落盘** | 无权威计划清单产物；`--only` 直接改写 `cases`（`case_runner.py:1414`，`main()` 里按 `--only` 过滤后重新绑定 `cases`；`--only` 形参在 `case_runner.py:1405`）不留声明 | "生成 N 条、判了 M 条""哪些用例一条没留痕"在报告里查不到 |
 
 > **已实现、本模块不重复造的部分**：`coverage_gate()` 已经按 `EXECUTED_STATUSES` 过滤——
 > **只有 `PASS`/`FAIL`/`PRECONDITION_UNMET` 才算触及维度**（`PRECONDITION_UNMET` 确实发了请求拿到响应，只是结论既非通过也非失败，见 `api_test_runner.py:143` 的 `EXECUTED_STATUSES`），`SKIPPED`/`N/A` 计入 `touched_only`；全被跳过的维度
-> 会被点名「假覆盖」**并记成 `COV-*` 缺陷**（`api_test_runner.py:1793-1849`）。
+> 会被点名「假覆盖」**并记成 `COV-*` 缺陷**（`api_test_runner.py:2066`，在 `coverage_gate()`（起于 `:1985`）内以 `add_issue(..., fid="COV-%s")` 落台账）。
 > 本模块做的是把它从 **stdout 提示**升级为**可落盘、可进报告、可 `--enforce` 的产物**，
 > 并补上它按设计不管的两块：**逐条**对账与**类别**对账。
 

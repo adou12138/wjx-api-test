@@ -18,23 +18,5 @@
     {"key": "evidence_path", "header": "证据路径"},
     {"key": "attribution", "header": "归因"},
     {"key": "retest_status", "header": "复测状态"}
-  ],
-  "smoke_finding_columns": [
-    {"key": "编号", "note": "冒烟台账沿用深度台账列口径"},
-    {"key": "类型"},
-    {"key": "严重程度"},
-    {"key": "状态"},
-    {"key": "维度"},
-    {"key": "问题描述"},
-    {"key": "请求Body"},
-    {"key": "预期结果"},
-    {"key": "实际结果"},
-    {"key": "置信度"},
-    {"key": "HTTP状态码"},
-    {"key": "请求ID"},
-    {"key": "TraceID"},
-    {"key": "证据路径"},
-    {"key": "归因"},
-    {"key": "复测状态"}
   ]
 }

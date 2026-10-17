@@ -85,6 +85,8 @@ L4 并发、事件和页面基线 → L5 历史缺陷回归。
 
 `flow.py` 默认多产两份计划：`plan.md`（人可读，四段：用例总览 / 待确认问题 / 前置依赖与关系 / 风险与不适用凭据）与 `dependencies.json`（机器可读，含原文证据与行号）。`--plan-only` 同样产出。
 
+`plan.md` 的渲染可独立重跑：`scripts/plan_render.py --plan intelligent_test_plan.json --cases generated_cases.json --contract-path <契约路径> --out plan.md`——`--contract-path` 仅把契约路径展示进计划里便于对照，不参与解析；省略 `--out` 则打印到 stdout。
+
 **待确认问题**由既有素材汇总而成，不新增事实：`blocked`（阻塞项）、`inferred_items`（低置信度字段）、`dependency_unknowns`（依赖定不位）、`uncovered_optional_detail`（选测零产出原因）、`payload_skipped`（被排除的安全载荷）。执行前处理这页清单，比跑完再返工便宜。
 
 **显式依赖的取数纪律**（`scripts/dependency_scan.py`，契约通道）：
@@ -114,6 +116,33 @@ L4 并发、事件和页面基线 → L5 历史缺陷回归。
 3. **定不位就不记**：说不出 7 位 action 号时只进 `unknowns` 留痕，不生成依赖；
 4. **候选不生效**：只有 `confirmed` 才参与前置判定。命中后该用例记 `PRECONDITION_UNMET`，
    既不算失败也不算通过，单列点名且不进缺陷台账。
+
+**命令行**（`scripts/precondition_scan.py`，各阶段可分开跑）：
+
+```bash
+python scripts/precondition_scan.py --prep --report <产物>/api_test_report_full.json --prompt-out prompt.md
+python scripts/precondition_scan.py --auto --report <产物>/api_test_report_full.json --known-actions 1000107,1000108 --store runtime_dependencies.json
+python scripts/precondition_scan.py --merge facts.json --report <产物>/api_test_report_full.json --store runtime_dependencies.json
+python scripts/precondition_scan.py --manual deps.json --store runtime_dependencies.json
+python scripts/precondition_scan.py --confirm-all --store runtime_dependencies.json
+python scripts/precondition_scan.py --markdown --date 2026-10-17 --store runtime_dependencies.json
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--report` | 执行报告 `*_report_full.json`（失败响应来源） |
+| `--prep` | 生成抽取提示词 |
+| `--prompt-out` | 提示词落盘路径（不传则打印到 stdout） |
+| `--merge` | 并入大模型产出的事实 JSON |
+| `--manual` | 人工登记的依赖 JSON（与 `--merge` 同格式）——跳过模型，但仍走同一套机械校验后并入 |
+| `--store` | 依赖记录落盘路径（默认 `runtime_dependencies.json`）；`--merge`/`--manual`/`--auto`/`--confirm*` 时写盘 |
+| `--known-actions` | 已知 action 全集（逗号分隔）；**给出后才对 action 号做存在性校验**，不给出时跳过该校验（仍按话术 + 邻近 action 号提取候选，误报风险更高） |
+| `--auto` | 规则直提：话术 + 邻近 action 号明确时免 LLM 直接产候选（仍是候选，须确认） |
+| `--confirm` / `--confirm-all` | 确认指定候选（`case_no` 或 `target_action`）/ 确认全部候选，转正式 |
+| `--markdown` | 渲染成可写入知识库的「运行实证」节 |
+| `--date` | 发现日期，写入依赖记录的 `generated_at` 与 `--markdown` 的渲染结果 |
+
+`flow.py --execute` 侧用 `--runtime-deps <路径>`（默认 `runtime_dependencies.json`）指定上述产出的依赖记录，**只采信 `status=confirmed` 的记录做前置判定**；文件不存在则不做任何前置判定，行为与不传时一致。
 
 **为什么确认这道闸不能省**：前置判定会让一条失败从缺陷台账里消失。判错的代价是真缺陷被
 静默吞掉、外观却完全合理。所以 `attribution_engine.match_precondition` 对未确认的依赖

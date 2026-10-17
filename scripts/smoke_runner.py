@@ -19,8 +19,8 @@ smoke_runner.py — 通用接口冒烟引擎（数据驱动，零业务知识）
   ERROR  网络或环境异常（连接失败、超时、被限流）—— 不记缺陷，重试后仍失败才落 ERROR
 
 产物（写入 --out-dir，默认 ./reports）：
-  smoke_results_<ts>.csv   全部结果（10 列）
-  smoke_issues_<ts>.csv    问题台账（扩展列：基础 9 列 + 置信度/HTTP状态码/证据路径/归因/复测状态）
+  smoke_results_<ts>.csv   全部结果（11 列）
+  smoke_issues_<ts>.csv    问题台账（基础 9 列 + 证据链 7 列，共 16 列，口径同 api_test_runner.FINDING_CSV_COLS）
   smoke_report_<ts>.json   完整结构化结果
   smoke_summary_<ts>.md    人类可读汇总
 

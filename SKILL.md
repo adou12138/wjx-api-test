@@ -1,6 +1,6 @@
 ---
 name: "wjx-api-test"
-version: "4.39.9"
+version: "4.39.10"
 agent_created: true
 description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测试，不绑定具体接口（无硬编码 action/endpoint/字段）。四条并列路径：**契约驱动自动生成**（契约→适用性→缺陷模式→字段变异+安全载荷清单→声明式用例→执行+覆盖率门禁；契约支持 ShowDoc/OpenAPI 3.x/Swagger 2.0 的 JSON 与 YAML，含 $ref 与嵌套展开）、**七步深度流程**（判适用性、按 31 维度框架推导覆盖、收紧断言执行、调其他接口交叉验证、数据工厂与清理、CSV 台账）、**冒烟**（批量探活，PASS/FAIL/N/A/ERROR）、**文档合理性审查**（不发请求，只审参数说明/一致性/错误码/边界/依赖关系）。适配器支持 REST/GraphQL/gRPC。AF 业务场景 prompt 自动注入 L5 产品知识（检索失败自动降级为纯契约，不影响主流程）；配套接口解析在同级扫描落空时从 L5 知识库捞候选（只进清单不自动填，供人工 --read-action 指定）。含 31 类维度框架、高频缺陷模式清单、18 条实测陷阱。`--profile discovery` 发现档把探测广度限额（超长上限 / 安全载荷条数 / 字段族配额 / AF 条数）集中到一处开关，用于"尽量多发现问题"；**默认只在指定单一环境执行**；**国际版维度默认不适用**。当用户提到"接口测试""测一下这个 API""按维度设计用例""记录问题单""接口回归""接口缺陷""审查接口文档""校验文档合理性""全量冒烟""冒烟测试""所有接口跑一遍""批量探活""接口清单巡检""测试计划审阅""接口依赖梳理""这个接口依赖哪些接口""测试中发现依赖""前置条件未满足""请先调用某接口""这个失败是不是缺陷"时使用。
 ---
@@ -15,7 +15,7 @@ description: 对任意 HTTP/OpenAPI/REST/RPC 接口设计并执行自动化测�
 | **契约驱动自动生成**（推荐） | 「按这份契约测一下这个接口」「尽量多发现问题」 | `scripts/flow.py --contract <路径> --execute`（要"多发现"加 `--profile discovery`） | `generated_cases.json` + `api_test_report_full.json` + `api_test_issues.csv` + `plan.md` |
 | **七步深度流程** | 「深挖这个接口」「按维度设计用例」 | 见下方「工作流程」+ `scripts/api_test_runner.py` | 自写用例 + 统一 16 列问题台账 |
 | **冒烟（批量探活）** | 「把这些接口全跑一遍看哪些通」 | `scripts/smoke_runner.py --config <cfg> --cases <cases> --out-dir reports` | 结果 CSV（PASS/FAIL/N/A/ERROR）+ 问题 CSV + `smoke_summary.md` |
-| **文档合理性审查** | 「审一下这份接口文档」「参数说明 / 错误码写得合理吗」 | **不发任何请求**，按 `references/doc_review.md` 核验 | `api_test_doc_review_report.md` + 9 列 `api_test_doc_issues.csv` |
+| **文档合理性审查** | 「审一下这份接口文档」「参数说明 / 错误码写得合理吗」 | **不发任何请求**，按 `references/doc_review.md` 核验 | 人工整理 `api_test_doc_review_report.md` + 16 列 `api_test_doc_issues.csv` |
 
 > **两条路由歧义必须先判清**：① 「审文档」≠「执行测试」——前者**全程不发请求**，判错会把一次静态审查变成一轮真实调用；② 「一批接口跑一遍」走冒烟（广度优先），**不是**对每个接口套七步深度流程（深度优先），两者不互相替代。
 
@@ -470,11 +470,11 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 
 ### 第 1 步（审查模式变体）：接口文档合理性审查
 
-> 当用户意图是「审查 / 校验接口文档是否合理」而非「执行接口测试」时，**进入文档审查模式：不发起真实调用，只审文档原文**。结论复用 31 维度框架，问题记入文档审查台账（9 列，见 `references/doc_review.md`，与执行侧统一 16 列台账不同源），并与后续测试衔接。
+> 当用户意图是「审查 / 校验接口文档是否合理」而非「执行接口测试」时，**进入文档审查模式：不发起真实调用，只审文档原文**。结论复用 31 维度框架，问题记入文档审查台账（统一 16 列，列定义以 `references/issue_format.md` 为唯一来源，与执行侧同源；详见 `references/doc_review.md`），并与后续测试衔接。
 
 审查六个面：① **字段参数说明**（请求+响应逐字段：名称 K7 / 类型 B,K / 必填 B1 / 取值范围 B2,B3 / 默认值 B9 / 单位 K / 示例 K9,B 是否齐备准确）；② **前后一致性**（请求↔响应字段名、多处描述、跨接口命名风格 K7、向前兼容 L2）；③ **错误码与错误信息**（完整性、码↔文案映射 H9、HTTP 状态码与业务码区分、根因不掩盖 H6、未声明码）；④ **边界条件**（空值/超长/越界/特殊字符、分页 AA、并发、时间边界）；⑤ **字段间依赖关系**（条件必填、互斥、联动、组合约束——未说明即记「依赖关系缺失」，高优先级）；⑥ **歧义/缺失/不合理**（模糊措辞、空白项、示例与说明冲突）。
 
-输出 `api_test_doc_review_report.md` + `api_test_doc_issues.csv`。**纯文档缺陷**反馈文档 owner；**文档与实现不一致**记「需求确认」转测试并作为后续优先验证项。四种契约来源与维度映射见 `references/doc_review.md`。
+输出 `api_test_doc_review_report.md` + `api_test_doc_issues.csv`（**均为纯人工交付物，无脚本生成**）。**纯文档缺陷**反馈文档 owner；**文档与实现不一致**记「需求确认」转测试并作为后续优先验证项。四种契约来源与维度映射见 `references/doc_review.md`。
 
 ### 第 1.5 步：接口适用性判断（必做，决定哪些维度适用）
 加载 `references/applicability_matrix.md`，按五步法判断：① 识别业务域 → ② 识别操作类型（查询/创建/修改/删除/导出/导入/订阅/配置）→ ③ **判断是否国际版场景** → ④ 从 §4 矩阵筛选适用维度 → ⑤ 不支持的功能标注 **N/A**（不计入通过率，但必须列出证明已判断）。
@@ -554,7 +554,7 @@ evidence 不是契约原文子串、数值与解析结果不符，全是字符�
 
 **方法论与规范**（`references/`）：`framework.md`（31 维度：A–L + M–Z + AA–AE，+ §9 断言/验证矩阵 + §11 数据管理）· `applicability_matrix.md` · `defect_patterns.md` · `doc_review.md` · `smoke_testing.md` · `ui_baseline.md` · `env_config.md` · `issue_format.md` · `case_schema.md` · `auto_generation.md` · `personal_config.md` · `intelligence_policy.md` · `attribution_rules.md` · `adapter_contract.md` · `real_smoke_delivery.md` · `pattern_candidates.md` · `case-coverage.md`（用例执行率对账：rate 严格 / looseTotal 宽松双口径） · `traps.md`
 
-**执行资产**（`scripts/`、`adapters/`）：入口 `flow.py` · `api_test_runner.py`（运行器模板，渲染 `FINDING_CSV_COLS` 台账行）· `smoke_runner.py` · `case_runner.py` · `kb_load_contract.py` · `personal_config.py` · `discovery_profile.py`（发现档：集中管理探测广度限额，一处开关）；生成链 `contract_parser.py`（ShowDoc/OpenAPI 3.x/Swagger 2.0，JSON+YAML，$ref 与嵌套递归展开）· `contract_model.py` · `field_semantics.py` · `applicability.py` · `pattern_engine.py` · `case_generator.py` · `business_scenarios.py`（AF 业务场景补充生成 + 六项门禁 + prompt 自动注入 L5 产品知识）· `companion_scan.py`（配套接口解析：越权读面 / 真往返 / 列表与计数交叉验证的入口；同级扫描落空时从 L5 知识库捞候选，只进清单不自动填）· `dim_generators.py`（零产出维度补齐：编码国际化 / 组合交叉 / 请求追踪 / 批量 / 导出下载 / 按字段特征触发的业务域专项）· `llm_semantics.py`（语义层接入：大模型读契约产出事实、机械校验后并入，可选且不传时零影响）· `llm_fact_cases.py`（语义层兑付：把并入的事实转成用例，没并入就一条不产）；闭环 `assertion_engine.py` · `attribution_engine.py` · `artifact_readback.py`（产物回读校验：写盘后读回验编码/表头/列宽/编号/行数/证据链列）· `evidence_bundle.py` · `minimizer.py` · `regression.py` · `asset_registry.py` · `relationship_inference.py` · `risk_engine.py` · `plan_builder.py` · `report_enhance.py` · `pattern_feedback.py` · `bug_pattern_pool.py`（缺陷模式池：`--merge` 把历轮 `report_full.json` 的缺陷按指纹累积、跨轮计 hits，`--rank` 出风险 Top、`--list` 汇总；**只累积与排序，不自动生成用例**——从一个历史缺陷推断不出修复后的正确行为，自动生成会产生错误断言或与既有生成器重复）· `ui_baseline.py`；适配器 `adapters/base.py` · `adapters/rest.py` · `adapters/sojump.py`（公共参数、鉴权、写操作门禁）· `adapters/graphql.py`（HTTP 200+errors 判失败，反假通过）· `adapters/grpc.py`（懒加载 grpcio，缺依赖实例化即报错）；结构约束 `schemas/contract_model.schema.json` · `schemas/test_plan.schema.json` · `schemas/execution_result.schema.json` · `schemas/finding.schema.json` · `schemas/regression_baseline.schema.json`
+**执行资产**（`scripts/`、`adapters/`）：入口 `flow.py` · `api_test_runner.py`（运行器模板，渲染 `FINDING_CSV_COLS` 台账行）· `smoke_runner.py` · `case_runner.py` · `kb_load_contract.py` · `personal_config.py` · `discovery_profile.py`（发现档：集中管理探测广度限额，一处开关）；生成链 `contract_parser.py`（ShowDoc/OpenAPI 3.x/Swagger 2.0，JSON+YAML，$ref 与嵌套递归展开）· `contract_model.py` · `field_semantics.py` · `applicability.py` · `pattern_engine.py` · `case_generator.py` · `business_scenarios.py`（AF 业务场景补充生成 + 六项门禁 + prompt 自动注入 L5 产品知识）· `companion_scan.py`（配套接口解析：越权读面 / 真往返 / 列表与计数交叉验证的入口；同级扫描落空时从 L5 知识库捞候选，只进清单不自动填）· `dim_generators.py`（零产出维度补齐：编码国际化 / 组合交叉 / 请求追踪 / 批量 / 导出下载 / 按字段特征触发的业务域专项）· `llm_semantics.py`（语义层接入：大模型读契约产出事实、机械校验后并入，可选且不传时零影响）· `llm_fact_cases.py`（语义层兑付：把并入的事实转成用例，没并入就一条不产）；闭环 `assertion_engine.py` · `attribution_engine.py` · `artifact_readback.py`（产物回读校验：写盘后读回验编码/表头/列宽/编号/行数/证据链列）· `case_coverage.py`（用例执行率对账：计划 vs 实际，严格/宽松双口径）· `check_key.py`（约束对账门禁：拿契约约束全集逐条核对用例是否兑现，只出声不进台账）· `evidence_bundle.py` · `minimizer.py` · `regression.py` · `asset_registry.py` · `relationship_inference.py` · `risk_engine.py` · `plan_builder.py` · `plan_render.py`（把智能计划渲染为人可读 `plan.md`，可独立重跑）· `dependency_scan.py`（契约显式依赖梳理：只认契约正文显式声明，不做字段名相似推断）· `precondition_scan.py`（运行实证通道：从失败响应提炼候选依赖，机械校验 + 人工确认后才生效）· `report_enhance.py` · `pattern_feedback.py` · `bug_pattern_pool.py`（缺陷模式池：`--merge` 把历轮 `report_full.json` 的缺陷按指纹累积、跨轮计 hits，`--rank` 出风险 Top、`--list` 汇总；**只累积与排序，不自动生成用例**——从一个历史缺陷推断不出修复后的正确行为，自动生成会产生错误断言或与既有生成器重复）· `ui_baseline.py`；适配器 `adapters/base.py` · `adapters/rest.py` · `adapters/sojump.py`（公共参数、鉴权、写操作门禁）· `adapters/graphql.py`（HTTP 200+errors 判失败，反假通过）· `adapters/grpc.py`（懒加载 grpcio，缺依赖实例化即报错）；结构约束 `schemas/contract_model.schema.json` · `schemas/test_plan.schema.json` · `schemas/execution_result.schema.json` · `schemas/finding.schema.json` · `schemas/regression_baseline.schema.json`
 
 **配置与实例资产**（`assets/`）：`finding_columns.json`（**台账列口径唯一来源**，深度流程与冒烟共用；改列名/增删列改这里，渲染层 `finding_row` 按它逐列取值，缺登记的表头在加载期就点名，不静默渲染成空值）· 占位模板 `personal_config.example.json` · `intelligent_config.example.json`（`flow.py --config`：`environment` 写门禁 / `execution` 档位与限流 / `inputs` 契约与基线）· `ui_baseline.example.json`（`template: true`，加载器主动跳过，防示范值造假缺陷）· `smoke_config.example.json` · `security_payloads.json`（G 维度安全载荷清单，case_generator 按语义标签选用）· `bug_patterns.json`（缺陷模式池数据文件，`bug_pattern_pool.py --merge` 累积，冷启动为空、随轮次增长）；问卷星参考实例 `smoke_config_wjx.json` · `smoke_cases_wjx.json` · `smoke_hooks_wjx.py`；说明与模板 `配置参数说明.md`（配置项 ↔ 接口参数 ↔ 中文含义）· `issue_template.csv`
 

@@ -42,7 +42,27 @@ python scripts/flow.py --contract <路径>
 python scripts/case_generator.py --contract <路径> --out cases.json
 python scripts/case_runner.py --cases cases.json --dry-run     # 看执行计划
 python scripts/case_runner.py --cases cases.json --only B,H    # 只跑指定维度
+
+# 配套接口：显式指定开启真往返 + 越权读面 + 交叉验证
+python scripts/case_generator.py --contract <路径> --read-action <读接口action> \
+    --read-params '{"id": 123}' --list-action <列表接口action>
+# 关掉同级目录扫描自动推断配套接口（只用显式声明 / 命令行指定）
+python scripts/case_generator.py --contract <路径> --no-auto-companion
+
+# 产物文件名前缀（默认 api_test）：同目录多轮运行/多接口时避免互相覆盖
+python scripts/flow.py --contract <路径> --execute --out-prefix chain_
+python scripts/case_runner.py --cases cases.json --out-prefix chain_
 ```
+
+## 参数速查
+
+| 参数 | 归属 | 说明 |
+|---|---|---|
+| `--out-prefix` | `flow.py` / `case_runner.py` | 产物文件名前缀（默认 `api_test`）。同目录多轮运行或一次跑多接口时用它区分产物，避免 `X_issues.csv` / `X_report_full.json` 互相覆盖——台账与报告**按前缀配对**，前缀撞车会让回读校验配错对 |
+| `--read-action` | `case_generator.py` | 配套读接口 action：给了才能做真往返（读→原样回写→再回读）与越权读面（A03/A07） |
+| `--read-params` | `case_generator.py` | 读接口所需参数，JSON 字符串（如 `'{"id": 123}'`）；带资源标识才能构造 A07 横向越权读 |
+| `--list-action` | `case_generator.py` | 配套列表接口 action：用于「创建后验列表出现 / 计数 +1」交叉验证 |
+| `--no-auto-companion` | `case_generator.py` | 关闭同级目录扫描自动推断配套接口（只用契约显式声明 / 命令行指定） |
 
 ## 覆盖率门禁如何被激活
 

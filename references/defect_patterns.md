@@ -240,6 +240,29 @@
 
 ---
 
+## 缺陷模式池（自动累积与风险排序，`scripts/bug_pattern_pool.py`）
+
+本表是人工归纳的固定清单；池则把**历轮真实缺陷**沉淀成可累积、可排序的数据（`assets/bug_patterns.json`，冷启动为空、随轮次增长），让"最常翻车 / 最该先看"的类浮出来，反哺本清单的更新。
+
+```bash
+python scripts/bug_pattern_pool.py --list                                  # 汇总池内容
+python scripts/bug_pattern_pool.py --merge <*_report_full.json>             # 按指纹并入本轮缺陷（幂等）
+python scripts/bug_pattern_pool.py --rank <*_report_full.json> --top 8 --out top.md   # 风险排序
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--pool` | 池文件路径（默认 `assets/bug_patterns.json`）；换池须显式指定 |
+| `--list` | 列出池内容汇总 |
+| `--merge` | 把一个 `*_report_full.json` 里的缺陷按指纹并入池（幂等：同源重复并入不改变池，不同源命中同一模式累加 hits） |
+| `--rank` | 对缺陷产物做风险排序 |
+| `--top` | `--rank` 输出的条数（默认 8） |
+| `--out` | `--rank` 的 Markdown 输出路径（省略则打印到 stdout） |
+
+**边界**：池只做**累积与排序，不自动生成用例**——从一个历史缺陷推断不出修复后的正确行为，自动生成会产生错误断言或与既有生成器重复。闭环落点是"知道什么常翻车 → 人决定补什么测试"。
+
+---
+
 ## 回归复测专项（复测本身会制造"假缺陷/假通过"）
 
 回归复测时接口往往已部分修复，此时**测试套件自身反而成为最大误报源**。1006001 实测复盘踩过三类，任何一次复测前先对照：

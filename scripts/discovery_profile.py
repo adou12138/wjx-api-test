@@ -6,7 +6,7 @@
 "想多探一点"此前要分别改三处、且容易漏：
 - 超长用例上限（``case_generator.BIG_CAP``）
 - 安全载荷每字段每类条数（``assets/security_payloads.json`` 的 limits）
-- 字段族配额（``pattern_engine`` 里 ``pick_by_family`` 的 6 / 5 / 2）
+- 字段族配额（``field_semantics`` 里 ``pick_by_family`` 的 6 / 5 / 2）
 - AF 业务场景条数上限（``business_scenarios.af_max_cases()``）
 限额散落在生成链的不同阶段，没有单一入口，放宽时既费事又容易只改一半。
 本模块把它们收成一个 profile：``--profile discovery`` / ``WJX_PROFILE=discovery``
