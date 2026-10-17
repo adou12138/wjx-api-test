@@ -101,7 +101,7 @@ WJX_BASE_URL=https://实际地址/实际路径 python scripts/api_test_runner.py
 > **例外（分享前必查）**：本地工作区可存在真实值 `assets/personal_config.json`——它已被 `.gitignore` 排除、**不进 git**，但若把整个 skill 目录打包或复制给别人，它会一起被带走。分发前务必确认它不在分发物里。
 
 - **配置文件（推荐）**：复制 `assets/personal_config.example.json` → 填真实值 → 放**包外** `~/.workbuddy/wjx-api-test/personal_config.json`（或用 `WJX_CONFIG` 指路径）；真实文件**不要入库、不要随 skill 分享**。
-- **环境变量（CI / 临时切换）**：`WJX_BASE_URL` / `WJX_APPID` / `WJX_MAIN` / `WJX_SUB` / `WJX_CORPID` / `WJX_CROSS_APPID` / `WJX_SIGN`。
+- **环境变量（CI / 临时切换）**：`WJX_BASE_URL` / `WJX_APPID` / `WJX_MAIN` / `WJX_SUB` / `WJX_CORPID` / `WJX_CROSS_APPID` / `WJX_SIGN`；另有 `WJX_VERIFY_TLS=1` 统一开启 TLS 证书校验（深度与冒烟共用一个开关，覆盖配置里的 `tls_verify`）。
 - **优先级**：环境变量 > `personal_config.json` > 报错——必需参数（地址 / appid / 主账号）缺失时启动即报错，**不带任何默认个人值跑测试**。逻辑集中在 `scripts/personal_config.py`，深度与冒烟共用同一来源。
 - **多套环境（region 分组 cn / intl）**：支持 `envs` 数组 + `default_env`；**先按 `--region`/`WJX_REGION` 过滤，再按 `--env`/`WJX_ENV`/`default_env`/首个 选定**。跨环境参数**仅在显式开启异常场景测试时**可用（`WJX_CROSS_ENV` / `--cross-env`）。
 

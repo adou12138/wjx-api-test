@@ -3,11 +3,13 @@
 1) 结果行的「请求Body」必须是真实请求报文（含 action 公共参数），不得填响应报文；
 2) 服务端 5xx / "内部错误" 不得判 N/A，必须判 FAIL 记入问题台账。
 """
-import sys, unittest
+import os, ssl, sys, unittest
 from pathlib import Path
 
-SKILL = Path(r"D:/TestCase/MySharedSkills/wjx-api-test")
-sys.path.insert(0, str(SKILL / "scripts"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _bootstrap  # noqa: F401,E402
 
 import smoke_runner as sr
 
@@ -73,7 +75,7 @@ class TestConfigNoInternalErrorNA(unittest.TestCase):
     def test_no_config_treats_internal_error_as_na(self):
         """所有 smoke 配置的 na_keywords 不得包含「内部错误」。"""
         import json
-        assets = SKILL / "assets"
+        assets = ROOT / "assets"
         offenders = []
         for p in assets.glob("smoke_config*.json"):
             cfg = json.loads(p.read_text(encoding="utf-8"))
@@ -127,6 +129,36 @@ class TestUnifiedLedger(unittest.TestCase):
         with open(out / "smoke_issues_t3.csv", encoding="utf-8-sig") as f:
             issues = list(_csv.DictReader(f))
         self.assertEqual(issues[0]["类型"], "环境")
+
+
+class TestTlsToggle(unittest.TestCase):
+    """TLS 开关口径统一：配置 tls_verify 与环境变量 WJX_VERIFY_TLS 两链共用，env 优先。"""
+
+    def setUp(self):
+        self._saved = os.environ.get("WJX_VERIFY_TLS")
+        os.environ.pop("WJX_VERIFY_TLS", None)
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop("WJX_VERIFY_TLS", None)
+        else:
+            os.environ["WJX_VERIFY_TLS"] = self._saved
+
+    def test_default_disables_verification(self):
+        c = sr.build_ssl(False)
+        self.assertFalse(c.check_hostname)
+        self.assertEqual(c.verify_mode, ssl.CERT_NONE)
+
+    def test_config_true_enables_verification(self):
+        c = sr.build_ssl(True)
+        self.assertTrue(c.check_hostname)
+        self.assertNotEqual(c.verify_mode, ssl.CERT_NONE)
+
+    def test_env_forces_verification_over_config(self):
+        os.environ["WJX_VERIFY_TLS"] = "1"
+        c = sr.build_ssl(False)   # 配置为不校验，env 仍应强制开启（两链同一开关）
+        self.assertTrue(c.check_hostname)
+        self.assertNotEqual(c.verify_mode, ssl.CERT_NONE)
 
 
 def _tmpdir():

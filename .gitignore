@@ -5,10 +5,15 @@
 # ============================================================
 
 # —— 个人凭据（绝不上传）——
+# 真实值实例一律不入库（包外约定见 SKILL.md「个人参数配置」）：
+#   personal_config.json / personal_config_<xxx>.json（如 personal_config_cw.json）
+#   smoke_config_*_private.json / smoke_config_*cw*.json（如 smoke_config_cw.json）
 personal_config.json
+personal_config_*.json
 smoke_config_wjx.json
 !assets/smoke_config_wjx.json
 smoke_config_*_private.json
+smoke_config_*cw*.json
 ~/.workbuddy/
 .env
 *.local.json

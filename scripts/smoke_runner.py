@@ -325,6 +325,9 @@ def run_pre(step: dict, cfg: dict, ctx: Ctx, call, dry: bool) -> list[dict]:
 # ---------------------------------------------------------------- HTTP
 
 def build_ssl(verify: bool) -> ssl.SSLContext:
+    # 与深度流程 api_test_runner 统一口径：环境变量 WJX_VERIFY_TLS=1 强制启用证书校验，
+    # 覆盖配置里的 tls_verify（两层开关，env 优先，避免同一件事两套配法各配各的）。
+    verify = bool(verify) or os.environ.get("WJX_VERIFY_TLS") == "1"
     c = ssl.create_default_context()
     if not verify:
         c.check_hostname = False

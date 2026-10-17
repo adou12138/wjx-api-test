@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """P2 闭环能力验证：回归基线快照/复测判定 + 缺陷回流候选池。"""
-import sys, csv, tempfile, unittest
+import os, sys, csv, tempfile, unittest
 from pathlib import Path
 
-SKILL = Path(r"D:/TestCase/MySharedSkills/wjx-api-test")
-sys.path.insert(0, str(SKILL / "scripts"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _bootstrap  # noqa: F401,E402
 
 import regression
 import pattern_feedback
